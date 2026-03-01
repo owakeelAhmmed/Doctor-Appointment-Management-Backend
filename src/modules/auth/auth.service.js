@@ -1,0 +1,446 @@
+import { User } from "./auth.model.js";
+import { Doctor } from "../doctor/doctor.model.js";
+// import { sendEmail } from "../../utils/email.service.js";
+// import { sendSMS } from "../../utils/sms.service.js";
+// import { uploadMedia } from "../../utils/media.util.js";
+import crypto from "crypto";
+import { sendEmail } from "../../services/email.service.js";
+import { sendSMS } from "../../services/sms.service.js";
+import { uploadMedia } from "../upload/media.service.js";
+
+export class AuthService {
+  
+  // Register new user
+  static async register(userData) {
+    const { email, phone } = userData;
+
+    // Check if user exists
+    const existingUser = await User.findOne({
+      $or: [{ email }, { phone }],
+    });
+
+    if (existingUser) {
+      throw new Error("User already exists with this email or phone");
+    }
+
+    // Create user
+    const user = await User.create(userData);
+
+    // Generate OTPs
+    const emailOTP = user.setEmailOTP();
+    const phoneOTP = user.setPhoneOTP();
+    await user.save();
+
+    // Send OTPs (don't await to speed up response)
+    this.sendOTPEmails(user, emailOTP, phoneOTP).catch(console.error);
+
+    return {
+      userId: user._id,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+    };
+  }
+
+  // Send OTP emails
+  static async sendOTPEmails(user, emailOTP, phoneOTP) {
+    await Promise.all([
+      sendEmail({
+        to: user.email,
+        subject: "Email Verification OTP",
+        template: "email-otp",
+        data: { otp: emailOTP, name: user.fullName },
+      }),
+      sendSMS({
+        to: user.phone,
+        message: `Your phone verification OTP is: ${phoneOTP}`,
+      }),
+    ]);
+  }
+
+  // Verify email OTP
+  static async verifyEmail(email, otp) {
+    const user = await User.findOne({ email });
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    if (!user.verifyOTP("email", otp)) {
+      throw new Error("Invalid or expired OTP");
+    }
+
+    user.isEmailVerified = true;
+    user.emailOTP = undefined;
+    await user.save();
+
+    return { message: "Email verified successfully" };
+  }
+
+  // Verify phone OTP
+  static async verifyPhone(phone, otp) {
+    const user = await User.findOne({ phone });
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    if (!user.verifyOTP("phone", otp)) {
+      throw new Error("Invalid or expired OTP");
+    }
+
+    user.isPhoneVerified = true;
+    user.phoneOTP = undefined;
+    await user.save();
+
+    return { message: "Phone verified successfully" };
+  }
+
+  // Login user
+  static async login(email, password) {
+    const user = await User.findOne({ email }).select("+password");
+    
+    if (!user) {
+      throw new Error("Invalid credentials");
+    }
+
+    // Check if account is locked
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+      const minutesLeft = Math.ceil((user.lockUntil - Date.now()) / 60000);
+      throw new Error(`Account is locked. Try again after ${minutesLeft} minutes`);
+    }
+
+    // Check password
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      // Increment login attempts
+      user.loginAttempts += 1;
+      
+      // Lock account after 5 failed attempts
+      if (user.loginAttempts >= 5) {
+        user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+      }
+      
+      await user.save();
+      throw new Error("Invalid credentials");
+    }
+
+    // Reset login attempts
+    user.loginAttempts = 0;
+    user.lockUntil = undefined;
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Check doctor verification status
+    if (user.role === "doctor") {
+      const doctor = await Doctor.findOne({ user: user._id });
+      if (doctor && doctor.verificationStatus !== "verified") {
+        throw new Error(
+          `Your doctor account is ${doctor.verificationStatus}. Please wait for verification.`,
+          { verificationStatus: doctor.verificationStatus }
+        );
+      }
+    }
+
+    // Generate token
+    const token = user.getSignedJwtToken();
+
+    return {
+      token,
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        isPhoneVerified: user.isPhoneVerified,
+        permissions: user.adminPermissions,
+      },
+    };
+  }
+
+  // Resend OTP
+  static async resendOTP(identifier, type) {
+    const user = await User.findOne({
+      $or: [{ email: identifier }, { phone: identifier }],
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    if (type === "email") {
+      const otp = user.setEmailOTP();
+      await user.save();
+      
+      await sendEmail({
+        to: user.email,
+        subject: "New Email Verification OTP",
+        template: "email-otp",
+        data: { otp, name: user.fullName },
+      });
+    } else if (type === "phone") {
+      const otp = user.setPhoneOTP();
+      await user.save();
+      
+      await sendSMS({
+        to: user.phone,
+        message: `Your new phone verification OTP is: ${otp}`,
+      });
+    } else {
+      throw new Error("Invalid OTP type");
+    }
+
+    return { message: `New OTP sent to your ${type}` };
+  }
+
+  // Complete doctor profile
+  static async completeDoctorProfile(userId, profileData, files) {
+    let doctor = await Doctor.findOne({ user: userId });
+    
+    if (!doctor) {
+      doctor = new Doctor({ user: userId });
+    }
+
+    // Upload documents if provided
+    const documents = { ...doctor.documents };
+    
+    if (files) {
+      for (const [key, fileArray] of Object.entries(files)) {
+        if (fileArray && fileArray[0]) {
+          const file = fileArray[0];
+          const uploaded = await uploadMedia({
+            buffer: file.buffer,
+            originalFilename: file.originalname,
+            ownerType: "doctors",
+            ownerId: userId,
+            folder: "verification",
+          });
+          
+          documents[key] = {
+            url: uploaded.url,
+            public_id: uploaded.public_id,
+            verified: false,
+          };
+        }
+      }
+    }
+
+    // Parse JSON strings
+    const parsedData = {
+      ...profileData,
+      qualifications: JSON.parse(profileData.qualifications || "[]"),
+      currentWorkplace: JSON.parse(profileData.currentWorkplace || "{}"),
+      availableDays: JSON.parse(profileData.availableDays || "[]"),
+      consultationTypes: JSON.parse(profileData.consultationTypes || "[]"),
+      bankInfo: JSON.parse(profileData.bankInfo || "{}"),
+      mobileBanking: JSON.parse(profileData.mobileBanking || "{}"),
+    };
+
+    // Update doctor profile
+    doctor = await Doctor.findOneAndUpdate(
+      { user: userId },
+      {
+        ...parsedData,
+        documents,
+        verificationStatus: "pending",
+      },
+      { new: true, upsert: true }
+    );
+
+    return doctor;
+  }
+
+  // Forgot password
+  static async forgotPassword(email) {
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    user.resetPasswordToken = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await user.save();
+
+    // Send email
+    await sendEmail({
+      to: user.email,
+      subject: "Password Reset Request",
+      template: "reset-password",
+      data: {
+        name: user.fullName,
+        resetToken,
+      },
+    });
+
+    return { message: "Password reset email sent" };
+  }
+
+  // Reset password
+  static async resetPassword(token, newPassword) {
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    const user = await User.findOne({
+      resetPasswordToken: hashedToken,
+      resetPasswordExpire: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      throw new Error("Invalid or expired reset token");
+    }
+
+    user.password = newPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    await user.save();
+
+    return { message: "Password reset successful" };
+  }
+
+  // Change password
+  static async changePassword(userId, currentPassword, newPassword) {
+    const user = await User.findById(userId).select("+password");
+    
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const isMatch = await user.matchPassword(currentPassword);
+    if (!isMatch) {
+      throw new Error("Current password is incorrect");
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    return { message: "Password changed successfully" };
+  }
+
+  // Create admin user (superadmin only)
+  static async createAdmin(adminData, createdBy) {
+    const { email, phone, fullName, department, designation, permissions } = adminData;
+
+    // Check if user exists
+    const existingUser = await User.findOne({
+      $or: [{ email }, { phone }],
+    });
+
+    if (existingUser) {
+      throw new Error("User already exists with this email or phone");
+    }
+
+    // Generate random password
+    const tempPassword = crypto.randomBytes(8).toString("hex");
+
+    // Create admin user
+    const admin = await User.create({
+      email,
+      phone,
+      password: tempPassword,
+      fullName,
+      dateOfBirth: new Date("1990-01-01"), // Default date
+      gender: "O",
+      role: "admin",
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      department,
+      designation,
+      adminPermissions: permissions,
+      createdBy,
+    });
+
+    // Send welcome email with credentials
+    await sendEmail({
+      to: admin.email,
+      subject: "Welcome to Admin Panel",
+      template: "admin-welcome",
+      data: {
+        name: admin.fullName,
+        email: admin.email,
+        password: tempPassword,
+        loginUrl: `${process.env.CLIENT_URL}/admin/login`,
+      },
+    });
+
+    return {
+      id: admin._id,
+      email: admin.email,
+      fullName: admin.fullName,
+      role: admin.role,
+      department: admin.department,
+      designation: admin.designation,
+      permissions: admin.adminPermissions,
+    };
+  }
+
+  // Get all admins (superadmin only)
+  static async getAllAdmins() {
+    const admins = await User.find({
+      role: { $in: ["admin", "superadmin"] },
+    }).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
+
+    return admins;
+  }
+
+  // Update admin permissions (superadmin only)
+  static async updateAdminPermissions(adminId, permissions, updatedBy) {
+    const admin = await User.findById(adminId);
+    
+    if (!admin || admin.role !== "admin") {
+      throw new Error("Admin not found");
+    }
+
+    admin.adminPermissions = permissions;
+    await admin.save();
+
+    // Log the change (you can add audit log here)
+    console.log(`Admin permissions updated by ${updatedBy}`);
+
+    return {
+      id: admin._id,
+      email: admin.email,
+      permissions: admin.adminPermissions,
+    };
+  }
+
+  // Get user profile
+  static async getProfile(userId) {
+    const user = await User.findById(userId).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
+    
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    let profile = null;
+    
+    if (user.role === "doctor") {
+      profile = await Doctor.findOne({ user: user._id });
+    }
+
+    return { user, profile };
+  }
+
+  // Update profile
+  static async updateProfile(userId, updateData) {
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        fullName: updateData.fullName,
+        address: updateData.address,
+        profileImage: updateData.profileImage,
+      },
+      { new: true, runValidators: true }
+    ).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
+
+    return user;
+  }
+}
