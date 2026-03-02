@@ -1,6 +1,5 @@
 import { cloudinary } from "../../config/cloudinary.js";
 import { detectMedia, safeFolder } from "../../utils/media.js";
-// import { detectMedia, safeFolder } from "../../utils/media.js";
 
 function uploadStream(buffer, options) {
   return new Promise((resolve, reject) => {

@@ -2,6 +2,8 @@ import { Router } from "express";
 import mediaRoutes from "../modules/upload/media.routes.js";
 import authRoutes from "../modules/auth/auth.routes.js";
 import patientRoutes from "../modules/patient/patient.routes.js";
+import doctorRoutes from "../modules/doctor/doctor.routes.js";
+import adminRoutes from "../modules/admin/admin.routes.js";
 
 const router = Router();
 
@@ -10,13 +12,12 @@ router.get("/", (req, res) => {
   res.json({ message: "API v1 running ✅" });
 });
 
-// ✅ mount sub-routes here
-router.use("/media", mediaRoutes); // => /api/v1/media
+router.use("/media", mediaRoutes);
 
 // later:
 router.use("/auth", authRoutes);
 router.use("/patient", patientRoutes);
-// router.use("/doctors", doctorRoutes);
-// router.use("/appointments", appointmentRoutes);
+router.use("/doctor", doctorRoutes);
+router.use("/admin", adminRoutes);
 
 export default router;

@@ -4,14 +4,13 @@ const mediaSchema = new mongoose.Schema(
   {
     url: { type: String, required: true },
     public_id: { type: String, required: true },
-    resource_type: { type: String, required: true }, // image | video | raw
+    resource_type: { type: String, required: true },
     format: String,
     bytes: Number,
     duration: Number,
     width: Number,
     height: Number,
-
-    ownerType: String, // users / doctors / appointments
+    ownerType: String,
     ownerId: String,
     folder: String,
     tags: [String],
