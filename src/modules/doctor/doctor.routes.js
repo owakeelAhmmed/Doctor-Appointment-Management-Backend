@@ -13,16 +13,8 @@ router.use(authorize("doctor"));
 
 // ==================== Profile Management ====================
 
-/**
- * @route   GET /api/v1/doctor/profile
- * @desc    Get doctor profile
- */
 router.get("/profile", DoctorController.getProfile);
 
-/**
- * @route   PUT /api/v1/doctor/profile
- * @desc    Update doctor profile
- */
 router.put(
   "/profile",
   validation.updateProfileValidation,
@@ -30,10 +22,6 @@ router.put(
   DoctorController.updateProfile
 );
 
-/**
- * @route   PUT /api/v1/doctor/schedule
- * @desc    Update doctor schedule
- */
 router.put(
   "/schedule",
   validation.scheduleValidation,
@@ -41,10 +29,6 @@ router.put(
   DoctorController.updateSchedule
 );
 
-/**
- * @route   PUT /api/v1/doctor/fee
- * @desc    Update consultation fee
- */
 router.put(
   "/fee",
   validation.updateFeeValidation,
@@ -52,10 +36,6 @@ router.put(
   DoctorController.updateFee
 );
 
-/**
- * @route   PUT /api/v1/doctor/bank-info
- * @desc    Update bank information
- */
 router.put(
   "/bank-info",
   validation.updateBankInfoValidation,
@@ -63,10 +43,6 @@ router.put(
   DoctorController.updateBankInfo
 );
 
-/**
- * @route   PUT /api/v1/doctor/mobile-banking
- * @desc    Update mobile banking information
- */
 router.put(
   "/mobile-banking",
   validation.updateMobileBankingValidation,
@@ -74,10 +50,6 @@ router.put(
   DoctorController.updateMobileBanking
 );
 
-/**
- * @route   POST /api/v1/doctor/documents
- * @desc    Upload documents
- */
 router.post(
   "/documents",
   uploadMemory.fields([

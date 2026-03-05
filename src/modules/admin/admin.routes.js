@@ -12,18 +12,8 @@ router.use(authorize("admin", "superadmin"));
 
 // ==================== Dashboard ====================
 
-/**
- * @route   GET /api/v1/admin/dashboard
- * @desc    Get admin dashboard
- * @access  Private (Admin/SuperAdmin)
- */
 router.get("/dashboard", AdminController.getDashboard);
 
-/**
- * @route   GET /api/v1/admin/analytics/revenue
- * @desc    Get revenue analytics
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/analytics/revenue",
   validation.reportDateValidation,
@@ -33,11 +23,6 @@ router.get(
 
 // ==================== User Management ====================
 
-/**
- * @route   GET /api/v1/admin/users
- * @desc    Get all users
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/users",
   validation.userFilterValidation,
@@ -45,18 +30,8 @@ router.get(
   AdminController.getUsers
 );
 
-/**
- * @route   GET /api/v1/admin/users/:userId
- * @desc    Get user details
- * @access  Private (Admin/SuperAdmin)
- */
 router.get("/users/:userId", AdminController.getUserDetails);
 
-/**
- * @route   PUT /api/v1/admin/users/:userId/status
- * @desc    Update user status (activate/deactivate)
- * @access  Private (Admin/SuperAdmin)
- */
 router.put(
   "/users/:userId/status",
   validation.updateUserStatusValidation,
@@ -64,11 +39,6 @@ router.put(
   AdminController.updateUserStatus
 );
 
-/**
- * @route   PUT /api/v1/admin/users/:userId/role
- * @desc    Update user role
- * @access  Private (SuperAdmin only)
- */
 router.put(
   "/users/:userId/role",
   authorize("superadmin"),
@@ -77,11 +47,6 @@ router.put(
   AdminController.updateUserRole
 );
 
-/**
- * @route   DELETE /api/v1/admin/users/:userId
- * @desc    Delete user (soft delete)
- * @access  Private (SuperAdmin only)
- */
 router.delete(
   "/users/:userId",
   authorize("superadmin"),
@@ -90,11 +55,6 @@ router.delete(
 
 // ==================== Doctor Verification ====================
 
-/**
- * @route   GET /api/v1/admin/doctors/verification
- * @desc    Get doctors pending verification
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/doctors/verification",
   validation.doctorFilterValidation,
@@ -102,21 +62,11 @@ router.get(
   AdminController.getDoctorsForVerification
 );
 
-/**
- * @route   GET /api/v1/admin/doctors/:doctorId/verification
- * @desc    Get doctor verification details
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/doctors/:doctorId/verification",
   AdminController.getVerificationDetails
 );
 
-/**
- * @route   PUT /api/v1/admin/doctors/:doctorId/verify
- * @desc    Verify doctor
- * @access  Private (Admin/SuperAdmin)
- */
 router.put(
   "/doctors/:doctorId/verify",
   validation.verifyDoctorValidation,
@@ -124,11 +74,6 @@ router.put(
   AdminController.verifyDoctor
 );
 
-/**
- * @route   PUT /api/v1/admin/doctors/:doctorId/documents/:documentType/verify
- * @desc    Verify doctor document
- * @access  Private (Admin/SuperAdmin)
- */
 router.put(
   "/doctors/:doctorId/documents/:documentType/verify",
   validation.verifyDocumentValidation,
@@ -137,22 +82,11 @@ router.put(
 );
 
 // ==================== Appointment Management ====================
-
-/**
- * @route   GET /api/v1/admin/appointments
- * @desc    Get all appointments
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/appointments",
   AdminController.getAllAppointments
 );
 
-/**
- * @route   PUT /api/v1/admin/appointments/:appointmentId
- * @desc    Update appointment (admin override)
- * @access  Private (Admin/SuperAdmin)
- */
 router.put(
   "/appointments/:appointmentId",
   validation.updateAppointmentValidation,
@@ -162,21 +96,11 @@ router.put(
 
 // ==================== Payment Management ====================
 
-/**
- * @route   GET /api/v1/admin/payments
- * @desc    Get all payments
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/payments",
   AdminController.getAllPayments
 );
 
-/**
- * @route   PUT /api/v1/admin/payments/:paymentId
- * @desc    Update payment
- * @access  Private (Admin/SuperAdmin)
- */
 router.put(
   "/payments/:paymentId",
   validation.updatePaymentValidation,
@@ -184,11 +108,6 @@ router.put(
   AdminController.updatePayment
 );
 
-/**
- * @route   POST /api/v1/admin/withdrawals/:withdrawalId/process
- * @desc    Process withdrawal
- * @access  Private (Admin/SuperAdmin)
- */
 router.post(
   "/withdrawals/:withdrawalId/process",
   validation.processWithdrawalValidation,
@@ -198,21 +117,11 @@ router.post(
 
 // ==================== Commission Management ====================
 
-/**
- * @route   GET /api/v1/admin/commissions/report
- * @desc    Get commission report
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/commissions/report",
   AdminController.getCommissionReport
 );
 
-/**
- * @route   PUT /api/v1/admin/commissions/doctors/:doctorId
- * @desc    Update doctor commission
- * @access  Private (Admin/SuperAdmin)
- */
 router.put(
   "/commissions/doctors/:doctorId",
   validation.updateCommissionValidation,
@@ -220,11 +129,6 @@ router.put(
   AdminController.updateDoctorCommission
 );
 
-/**
- * @route   POST /api/v1/admin/commissions/bulk-update
- * @desc    Bulk update commission
- * @access  Private (SuperAdmin only)
- */
 router.post(
   "/commissions/bulk-update",
   authorize("superadmin"),
@@ -235,18 +139,8 @@ router.post(
 
 // ==================== System Settings ====================
 
-/**
- * @route   GET /api/v1/admin/settings
- * @desc    Get system settings
- * @access  Private (Admin/SuperAdmin)
- */
 router.get("/settings", AdminController.getSettings);
 
-/**
- * @route   PUT /api/v1/admin/settings
- * @desc    Update system settings
- * @access  Private (SuperAdmin only)
- */
 router.put(
   "/settings",
   authorize("superadmin"),
@@ -257,21 +151,11 @@ router.put(
 
 // ==================== Reports ====================
 
-/**
- * @route   GET /api/v1/admin/reports/doctors/:doctorId
- * @desc    Get doctor performance report
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/reports/doctors/:doctorId",
   AdminController.getDoctorPerformanceReport
 );
 
-/**
- * @route   GET /api/v1/admin/reports/patients/:patientId
- * @desc    Get patient report
- * @access  Private (Admin/SuperAdmin)
- */
 router.get(
   "/reports/patients/:patientId",
   AdminController.getPatientReport
