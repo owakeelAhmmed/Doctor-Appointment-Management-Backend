@@ -1,20 +1,15 @@
 import { User } from "./auth.model.js";
 import { Doctor } from "../doctor/doctor.model.js";
-// import { sendEmail } from "../../utils/email.service.js";
-// import { sendSMS } from "../../utils/sms.service.js";
-// import { uploadMedia } from "../../utils/media.util.js";
 import crypto from "crypto";
 import { sendEmail } from "../../services/email.service.js";
 import { sendSMS } from "../../services/sms.service.js";
 import { uploadMedia } from "../upload/media.service.js";
+import { Patient } from "../patient/patient.model.js";
 
 export class AuthService {
-  
   // Register new user
   static async register(userData) {
-    const { email, phone } = userData;
-
-    // Check if user exists
+    const { email, phone, role = "patient" } = userData;
     const existingUser = await User.findOne({
       $or: [{ email }, { phone }],
     });
@@ -26,12 +21,26 @@ export class AuthService {
     // Create user
     const user = await User.create(userData);
 
+    if (user.role === "patient") {
+      try {
+        await Patient.create({
+          user: user._id,
+          totalAppointments: 0,
+          totalSpent: 0,
+          favoriteDoctors: [],
+        });
+        console.log(`✅ Patient profile created for user: ${user._id}`);
+      } catch (error) {
+        console.error("Error creating patient profile:", error);
+      }
+    }
+
     // Generate OTPs
     const emailOTP = user.setEmailOTP();
     const phoneOTP = user.setPhoneOTP();
     await user.save();
 
-    // Send OTPs (don't await to speed up response)
+    // Send OTPs
     this.sendOTPEmails(user, emailOTP, phoneOTP).catch(console.error);
 
     return {
@@ -97,7 +106,7 @@ export class AuthService {
   // Login user
   static async login(email, password) {
     const user = await User.findOne({ email }).select("+password");
-    
+
     if (!user) {
       throw new Error("Invalid credentials");
     }
@@ -105,7 +114,9 @@ export class AuthService {
     // Check if account is locked
     if (user.lockUntil && user.lockUntil > Date.now()) {
       const minutesLeft = Math.ceil((user.lockUntil - Date.now()) / 60000);
-      throw new Error(`Account is locked. Try again after ${minutesLeft} minutes`);
+      throw new Error(
+        `Account is locked. Try again after ${minutesLeft} minutes`,
+      );
     }
 
     // Check password
@@ -113,12 +124,12 @@ export class AuthService {
     if (!isMatch) {
       // Increment login attempts
       user.loginAttempts += 1;
-      
+
       // Lock account after 5 failed attempts
       if (user.loginAttempts >= 5) {
         user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
       }
-      
+
       await user.save();
       throw new Error("Invalid credentials");
     }
@@ -135,7 +146,7 @@ export class AuthService {
       if (doctor && doctor.verificationStatus !== "verified") {
         throw new Error(
           `Your doctor account is ${doctor.verificationStatus}. Please wait for verification.`,
-          { verificationStatus: doctor.verificationStatus }
+          { verificationStatus: doctor.verificationStatus },
         );
       }
     }
@@ -171,7 +182,7 @@ export class AuthService {
     if (type === "email") {
       const otp = user.setEmailOTP();
       await user.save();
-      
+
       await sendEmail({
         to: user.email,
         subject: "New Email Verification OTP",
@@ -181,7 +192,7 @@ export class AuthService {
     } else if (type === "phone") {
       const otp = user.setPhoneOTP();
       await user.save();
-      
+
       await sendSMS({
         to: user.phone,
         message: `Your new phone verification OTP is: ${otp}`,
@@ -196,14 +207,14 @@ export class AuthService {
   // Complete doctor profile
   static async completeDoctorProfile(userId, profileData, files) {
     let doctor = await Doctor.findOne({ user: userId });
-    
+
     if (!doctor) {
       doctor = new Doctor({ user: userId });
     }
 
     // Upload documents if provided
     const documents = { ...doctor.documents };
-    
+
     if (files) {
       for (const [key, fileArray] of Object.entries(files)) {
         if (fileArray && fileArray[0]) {
@@ -215,7 +226,7 @@ export class AuthService {
             ownerId: userId,
             folder: "verification",
           });
-          
+
           documents[key] = {
             url: uploaded.url,
             public_id: uploaded.public_id,
@@ -244,7 +255,7 @@ export class AuthService {
         documents,
         verificationStatus: "pending",
       },
-      { new: true, upsert: true }
+      { new: true, upsert: true },
     );
 
     return doctor;
@@ -253,7 +264,7 @@ export class AuthService {
   // Forgot password
   static async forgotPassword(email) {
     const user = await User.findOne({ email });
-    
+
     if (!user) {
       throw new Error("User not found");
     }
@@ -284,10 +295,7 @@ export class AuthService {
 
   // Reset password
   static async resetPassword(token, newPassword) {
-    const hashedToken = crypto
-      .createHash("sha256")
-      .update(token)
-      .digest("hex");
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
     const user = await User.findOne({
       resetPasswordToken: hashedToken,
@@ -309,7 +317,7 @@ export class AuthService {
   // Change password
   static async changePassword(userId, currentPassword, newPassword) {
     const user = await User.findById(userId).select("+password");
-    
+
     if (!user) {
       throw new Error("User not found");
     }
@@ -327,7 +335,8 @@ export class AuthService {
 
   // Create admin user (superadmin only)
   static async createAdmin(adminData, createdBy) {
-    const { email, phone, fullName, department, designation, permissions } = adminData;
+    const { email, phone, fullName, department, designation, permissions } =
+      adminData;
 
     // Check if user exists
     const existingUser = await User.findOne({
@@ -386,7 +395,9 @@ export class AuthService {
   static async getAllAdmins() {
     const admins = await User.find({
       role: { $in: ["admin", "superadmin"] },
-    }).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
+    }).select(
+      "-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire",
+    );
 
     return admins;
   }
@@ -394,7 +405,7 @@ export class AuthService {
   // Update admin permissions (superadmin only)
   static async updateAdminPermissions(adminId, permissions, updatedBy) {
     const admin = await User.findById(adminId);
-    
+
     if (!admin || admin.role !== "admin") {
       throw new Error("Admin not found");
     }
@@ -414,14 +425,16 @@ export class AuthService {
 
   // Get user profile
   static async getProfile(userId) {
-    const user = await User.findById(userId).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
-    
+    const user = await User.findById(userId).select(
+      "-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire",
+    );
+
     if (!user) {
       throw new Error("User not found");
     }
 
     let profile = null;
-    
+
     if (user.role === "doctor") {
       profile = await Doctor.findOne({ user: user._id });
     }
@@ -438,8 +451,10 @@ export class AuthService {
         address: updateData.address,
         profileImage: updateData.profileImage,
       },
-      { new: true, runValidators: true }
-    ).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
+      { new: true, runValidators: true },
+    ).select(
+      "-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire",
+    );
 
     return user;
   }
