@@ -40,14 +40,14 @@ const userSchema = new mongoose.Schema(
       enum: ["M", "F", "O"],
       required: true,
     },
-    
+
     // Role Management
     role: {
       type: String,
       enum: ["patient", "doctor", "admin", "superadmin"],
       default: "patient",
     },
-    
+
     // Verification Status
     isEmailVerified: {
       type: Boolean,
@@ -61,7 +61,7 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    
+
     // OTP Verification
     emailOTP: {
       code: String,
@@ -71,7 +71,7 @@ const userSchema = new mongoose.Schema(
       code: String,
       expiresAt: Date,
     },
-    
+
     // Profile Information
     profileImage: {
       url: String,
@@ -84,11 +84,11 @@ const userSchema = new mongoose.Schema(
       postalCode: String,
       country: { type: String, default: "Bangladesh" },
     },
-    
+
     // For Password Reset
     resetPasswordToken: String,
     resetPasswordExpire: Date,
-    
+
     // Last Login Tracking
     lastLogin: Date,
     loginAttempts: {
@@ -96,25 +96,36 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
     lockUntil: Date,
-    
+
     // Admin Specific Fields
     adminPermissions: {
       type: [String],
       enum: [
-        'manage_users',
-        'manage_doctors',
-        'manage_appointments',
-        'manage_payments',
-        'view_reports',
-        'manage_settings',
-        'manage_roles',
-        'view_logs'
+        "manage_users",
+        "manage_doctors",
+        "manage_appointments",
+        "manage_payments",
+        "view_reports",
+        "manage_settings",
+        "manage_roles",
+        "view_logs",
       ],
       default: [],
     },
+    verificationStatus: {
+      type: String,
+      enum: ["pending", "under_review", "verified", "rejected", "suspended"],
+      default: "pending",
+    },
+    verificationNotes: String,
+    verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    verifiedAt: Date,
     department: String,
     designation: String,
-    
+
     // Created By (for audit)
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -123,7 +134,7 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Encrypt password before save
@@ -148,7 +159,7 @@ userSchema.methods.getSignedJwtToken = function () {
     JWT_SECRET,
     {
       expiresIn: JWT_EXPIRE,
-    }
+    },
   );
 };
 
@@ -185,11 +196,11 @@ userSchema.methods.setPhoneOTP = function () {
 // Verify OTP
 userSchema.methods.verifyOTP = function (type, enteredOTP) {
   const otpData = type === "email" ? this.emailOTP : this.phoneOTP;
-  
+
   if (!otpData || !otpData.code) return false;
   if (otpData.expiresAt < new Date()) return false;
   if (otpData.code !== enteredOTP) return false;
-  
+
   return true;
 };
 

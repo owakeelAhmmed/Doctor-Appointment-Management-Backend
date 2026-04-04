@@ -7,9 +7,14 @@ import { uploadMedia } from "../upload/media.service.js";
 import { Patient } from "../patient/patient.model.js";
 
 export class AuthService {
-  // Register new user
-  static async register(userData) {
+  
+  // ==================== REGISTER ====================
+  
+  // Register new user (Patient or Doctor)
+  static async register(userData, files = null) {
     const { email, phone, role = "patient" } = userData;
+    
+    // Check if user exists
     const existingUser = await User.findOne({
       $or: [{ email }, { phone }],
     });
@@ -21,6 +26,7 @@ export class AuthService {
     // Create user
     const user = await User.create(userData);
 
+    // ==================== PATIENT REGISTRATION ====================
     if (user.role === "patient") {
       try {
         await Patient.create({
@@ -28,6 +34,9 @@ export class AuthService {
           totalAppointments: 0,
           totalSpent: 0,
           favoriteDoctors: [],
+          medicalHistory: [],
+          allergies: [],
+          chronicDiseases: [],
         });
         console.log(`✅ Patient profile created for user: ${user._id}`);
       } catch (error) {
@@ -35,37 +44,204 @@ export class AuthService {
       }
     }
 
-    // Generate OTPs
+    // ==================== DOCTOR REGISTRATION WITH VERIFICATION ====================
+    if (user.role === "doctor") {
+      try {
+        // Prepare doctor profile data
+        const doctorData = {
+          user: user._id,
+          bmdcRegNo: userData.bmdcRegNo,
+          specialization: userData.specialization,
+          qualifications: userData.qualifications || [],
+          experienceYears: userData.experienceYears,
+          currentWorkplace: userData.currentWorkplace,
+          consultationFee: userData.consultationFee,
+          consultationTypes: userData.consultationTypes || ["in-person", "video"],
+          verificationStatus: "pending", // CRITICAL: Pending by default
+          totalPatients: 0,
+          totalEarnings: 0,
+          rating: 0,
+          totalReviews: 0,
+          availableDays: [],
+        };
+
+        // Add bank info if provided
+        if (userData.bankName || userData.accountNumber) {
+          doctorData.bankInfo = {
+            bankName: userData.bankName || "",
+            accountNumber: userData.accountNumber || "",
+            accountHolderName: userData.accountHolderName || "",
+            routingNumber: userData.routingNumber || "",
+            branchName: userData.branchName || "",
+          };
+        }
+
+        // Add mobile banking if provided
+        if (userData.bKashNumber || userData.nagadNumber) {
+          doctorData.mobileBanking = {
+            bKash: userData.bKashNumber || "",
+            nagad: userData.nagadNumber || "",
+            rocket: userData.rocketNumber || "",
+          };
+        }
+
+        // Handle document uploads if files provided
+        if (files) {
+          doctorData.documents = {
+            bmdcCertificate: files.bmdcCertificate ? {
+              url: await this.uploadDocument(files.bmdcCertificate[0]),
+              public_id: null,
+              verified: false,
+              uploadedAt: new Date(),
+            } : null,
+            nid: files.nidCard ? {
+              url: await this.uploadDocument(files.nidCard[0]),
+              public_id: null,
+              verified: false,
+              uploadedAt: new Date(),
+            } : null,
+            mbbsCertificate: files.mbbsCertificate ? {
+              url: await this.uploadDocument(files.mbbsCertificate[0]),
+              public_id: null,
+              verified: false,
+              uploadedAt: new Date(),
+            } : null,
+            specializationCertificate: files.specializationCertificate ? {
+              url: await this.uploadDocument(files.specializationCertificate[0]),
+              public_id: null,
+              verified: false,
+              uploadedAt: new Date(),
+            } : null,
+            profilePhoto: files.profilePhoto ? {
+              url: await this.uploadDocument(files.profilePhoto[0]),
+              public_id: null,
+              verified: false,
+              uploadedAt: new Date(),
+            } : null,
+          };
+        }
+
+        await Doctor.create(doctorData);
+        console.log(`✅ Doctor profile created for user: ${user._id} (pending verification)`);
+
+        // Send notification to admins about new doctor registration
+        await this.notifyAdminsForVerification(user);
+        
+      } catch (error) {
+        console.error("Error creating doctor profile:", error);
+        // Rollback user creation if doctor profile fails
+        await User.findByIdAndDelete(user._id);
+        throw new Error("Failed to create doctor profile: " + error.message);
+      }
+    }
+
+    // Generate OTP (only email OTP, phone OTP optional)
     const emailOTP = user.setEmailOTP();
-    const phoneOTP = user.setPhoneOTP();
+    
+    // Only generate phone OTP if phone exists
+    let phoneOTP = null;
+    if (user.phone) {
+      phoneOTP = user.setPhoneOTP();
+    }
+    
     await user.save();
 
     // Send OTPs
-    this.sendOTPEmails(user, emailOTP, phoneOTP).catch(console.error);
+    await this.sendOTPEmails(user, emailOTP, phoneOTP).catch(console.error);
 
-    return {
+    // Prepare response based on role
+    const response = {
       userId: user._id,
       email: user.email,
-      phone: user.phone,
       role: user.role,
     };
+
+    if (user.phone) {
+      response.phone = user.phone;
+    }
+
+    // Add verification message for doctors
+    if (user.role === "doctor") {
+      response.message = "Registration successful! Your application is pending admin verification. You will receive an email once approved. This usually takes 24-48 hours.";
+      response.verificationStatus = "pending";
+    }
+
+    return response;
   }
 
-  // Send OTP emails
+  // Helper method to upload documents
+  static async uploadDocument(file) {
+    try {
+      const uploaded = await uploadMedia({
+        buffer: file.buffer,
+        originalFilename: file.originalname,
+        ownerType: "doctors",
+        folder: "verification-documents",
+        tags: ["doctor", "verification"],
+      });
+      return uploaded.url;
+    } catch (error) {
+      console.error("Document upload failed:", error);
+      return null;
+    }
+  }
+
+  // Send OTP emails and SMS
   static async sendOTPEmails(user, emailOTP, phoneOTP) {
-    await Promise.all([
+    const promises = [
       sendEmail({
         to: user.email,
         subject: "Email Verification OTP",
         template: "email-otp",
-        data: { otp: emailOTP, name: user.fullName },
+        data: { otp: emailOTP, name: user.fullName, role: user.role },
       }),
-      sendSMS({
-        to: user.phone,
-        message: `Your phone verification OTP is: ${phoneOTP}`,
-      }),
-    ]);
+    ];
+
+    // Only send SMS if phone OTP exists
+    if (phoneOTP && user.phone) {
+      promises.push(
+        sendSMS({
+          to: user.phone,
+          message: `Your phone verification OTP is: ${phoneOTP}`,
+        })
+      );
+    }
+
+    await Promise.all(promises);
   }
+
+  // Notify admins about new doctor registration
+  static async notifyAdminsForVerification(user) {
+    try {
+      const admins = await User.find({ 
+        role: { $in: ["admin", "superadmin"] } 
+      }).select("email fullName");
+
+      if (admins.length === 0) return;
+
+      // Send email to all admins
+      for (const admin of admins) {
+        await sendEmail({
+          to: admin.email,
+          subject: "New Doctor Registration - Pending Verification",
+          template: "admin-doctor-verification",
+          data: {
+            adminName: admin.fullName,
+            doctorName: user.fullName,
+            doctorEmail: user.email,
+            doctorId: user._id,
+            pendingUrl: `${process.env.ADMIN_URL || "http://localhost:3000"}/admin/doctors/pending`,
+          },
+        });
+      }
+
+      console.log(`✅ Notified ${admins.length} admins about new doctor registration`);
+    } catch (error) {
+      console.error("Failed to notify admins:", error);
+    }
+  }
+
+  // ==================== VERIFICATION ====================
 
   // Verify email OTP
   static async verifyEmail(email, otp) {
@@ -102,6 +278,46 @@ export class AuthService {
 
     return { message: "Phone verified successfully" };
   }
+
+  // Resend OTP
+  static async resendOTP(identifier, type) {
+    const user = await User.findOne({
+      $or: [{ email: identifier }, { phone: identifier }],
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    if (type === "email") {
+      const otp = user.setEmailOTP();
+      await user.save();
+
+      await sendEmail({
+        to: user.email,
+        subject: "New Email Verification OTP",
+        template: "email-otp",
+        data: { otp, name: user.fullName },
+      });
+    } else if (type === "phone") {
+      if (!user.phone) {
+        throw new Error("Phone number not found");
+      }
+      const otp = user.setPhoneOTP();
+      await user.save();
+
+      await sendSMS({
+        to: user.phone,
+        message: `Your new phone verification OTP is: ${otp}`,
+      });
+    } else {
+      throw new Error("Invalid OTP type");
+    }
+
+    return { message: `New OTP sent to your ${type}` };
+  }
+
+  // ==================== LOGIN ====================
 
   // Login user
   static async login(email, password) {
@@ -140,14 +356,26 @@ export class AuthService {
     user.lastLogin = new Date();
     await user.save();
 
-    // Check doctor verification status
+    // CRITICAL: Check doctor verification status
     if (user.role === "doctor") {
       const doctor = await Doctor.findOne({ user: user._id });
-      if (doctor && doctor.verificationStatus !== "verified") {
-        throw new Error(
-          `Your doctor account is ${doctor.verificationStatus}. Please wait for verification.`,
-          { verificationStatus: doctor.verificationStatus },
-        );
+      
+      if (!doctor) {
+        throw new Error("Doctor profile not found");
+      }
+      
+      if (doctor.verificationStatus !== "verified") {
+        let errorMessage = `Your doctor account is ${doctor.verificationStatus}. `;
+        
+        if (doctor.verificationStatus === "pending") {
+          errorMessage += "Please wait for admin approval. You will receive an email once verified.";
+        } else if (doctor.verificationStatus === "rejected") {
+          errorMessage += `Reason: ${doctor.verificationNotes || "Please contact support for more information."}`;
+        } else if (doctor.verificationStatus === "suspended") {
+          errorMessage += "Your account has been suspended. Please contact support.";
+        }
+        
+        throw new Error(errorMessage);
       }
     }
 
@@ -169,42 +397,172 @@ export class AuthService {
     };
   }
 
-  // Resend OTP
-  static async resendOTP(identifier, type) {
-    const user = await User.findOne({
-      $or: [{ email: identifier }, { phone: identifier }],
-    });
+  // ==================== DOCTOR VERIFICATION (ADMIN) ====================
 
+  // Admin: Verify doctor
+  static async verifyDoctor(adminId, doctorId, status, notes = "") {
+    // Check if admin is authorized
+    const admin = await User.findById(adminId);
+    if (!admin || !["admin", "superadmin"].includes(admin.role)) {
+      throw new Error("Unauthorized: Only admins can verify doctors");
+    }
+
+    // Find doctor
+    const doctor = await Doctor.findOne({ user: doctorId });
+    if (!doctor) {
+      throw new Error("Doctor not found");
+    }
+
+    // Find user
+    const user = await User.findById(doctorId);
     if (!user) {
       throw new Error("User not found");
     }
 
-    if (type === "email") {
-      const otp = user.setEmailOTP();
-      await user.save();
+    // Update verification status
+    doctor.verificationStatus = status;
+    doctor.verificationNotes = notes;
+    doctor.verifiedBy = adminId;
+    doctor.verifiedAt = new Date();
+    await doctor.save();
 
+    // Send email notification to doctor
+    if (status === "verified") {
       await sendEmail({
         to: user.email,
-        subject: "New Email Verification OTP",
-        template: "email-otp",
-        data: { otp, name: user.fullName },
+        subject: "Doctor Account Verified - Welcome to Doccure",
+        template: "doctor-verified",
+        data: {
+          name: user.fullName,
+          loginUrl: `${process.env.CLIENT_URL || "http://localhost:3000"}/login`,
+          dashboardUrl: `${process.env.CLIENT_URL || "http://localhost:3000"}/doctor/dashboard`,
+        },
       });
-    } else if (type === "phone") {
-      const otp = user.setPhoneOTP();
-      await user.save();
-
-      await sendSMS({
-        to: user.phone,
-        message: `Your new phone verification OTP is: ${otp}`,
+      console.log(`✅ Doctor ${user.email} account verified`);
+      
+    } else if (status === "rejected") {
+      await sendEmail({
+        to: user.email,
+        subject: "Doctor Application Update - Not Approved",
+        template: "doctor-rejected",
+        data: {
+          name: user.fullName,
+          reason: notes || "Your application did not meet our verification criteria.",
+          supportEmail: process.env.SUPPORT_EMAIL || "support@doccure.com",
+        },
       });
-    } else {
-      throw new Error("Invalid OTP type");
+      console.log(`❌ Doctor ${user.email} application rejected`);
+      
+    } else if (status === "suspended") {
+      await sendEmail({
+        to: user.email,
+        subject: "Doctor Account Suspended",
+        template: "doctor-suspended",
+        data: {
+          name: user.fullName,
+          reason: notes || "Violation of terms of service.",
+          supportEmail: process.env.SUPPORT_EMAIL || "support@doccure.com",
+        },
+      });
+      console.log(`⚠️ Doctor ${user.email} account suspended`);
     }
 
-    return { message: `New OTP sent to your ${type}` };
+    return {
+      doctorId: doctor._id,
+      userId: user._id,
+      email: user.email,
+      fullName: user.fullName,
+      verificationStatus: status,
+      verifiedAt: doctor.verifiedAt,
+      notes: notes,
+    };
   }
 
-  // Complete doctor profile
+  // Admin: Get pending doctors
+  static async getPendingDoctors(page = 1, limit = 10) {
+    const skip = (page - 1) * limit;
+
+    const pendingDoctors = await Doctor.find({ verificationStatus: "pending" })
+      .populate("user", "fullName email phone dateOfBirth gender createdAt")
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: 1 });
+
+    const total = await Doctor.countDocuments({ verificationStatus: "pending" });
+
+    return {
+      doctors: pendingDoctors,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // Admin: Get all doctors with filters
+  static async getAllDoctors(filters = {}, page = 1, limit = 10) {
+    const { verificationStatus, specialization, search } = filters;
+    const skip = (page - 1) * limit;
+
+    const query = {};
+    if (verificationStatus && verificationStatus !== "all") {
+      query.verificationStatus = verificationStatus;
+    }
+    if (specialization) {
+      query.specialization = { $regex: specialization, $options: "i" };
+    }
+
+    let doctors = await Doctor.find(query)
+      .populate("user", "fullName email phone dateOfBirth gender createdAt")
+      .populate("verifiedBy", "fullName email")
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: -1 });
+
+    // Search by doctor name if provided
+    if (search) {
+      doctors = doctors.filter(doctor => 
+        doctor.user?.fullName?.toLowerCase().includes(search.toLowerCase()) ||
+        doctor.user?.email?.toLowerCase().includes(search.toLowerCase()) ||
+        doctor.specialization?.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    const total = await Doctor.countDocuments(query);
+
+    return {
+      doctors,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // Admin: Get doctor statistics
+  static async getDoctorStatistics() {
+    const totalDoctors = await Doctor.countDocuments();
+    const pendingDoctors = await Doctor.countDocuments({ verificationStatus: "pending" });
+    const verifiedDoctors = await Doctor.countDocuments({ verificationStatus: "verified" });
+    const rejectedDoctors = await Doctor.countDocuments({ verificationStatus: "rejected" });
+    const suspendedDoctors = await Doctor.countDocuments({ verificationStatus: "suspended" });
+
+    return {
+      total: totalDoctors,
+      pending: pendingDoctors,
+      verified: verifiedDoctors,
+      rejected: rejectedDoctors,
+      suspended: suspendedDoctors,
+    };
+  }
+
+  // ==================== DOCTOR PROFILE COMPLETION ====================
+
+  // Complete doctor profile (for existing doctors)
   static async completeDoctorProfile(userId, profileData, files) {
     let doctor = await Doctor.findOne({ user: userId });
 
@@ -239,12 +597,12 @@ export class AuthService {
     // Parse JSON strings
     const parsedData = {
       ...profileData,
-      qualifications: JSON.parse(profileData.qualifications || "[]"),
-      currentWorkplace: JSON.parse(profileData.currentWorkplace || "{}"),
-      availableDays: JSON.parse(profileData.availableDays || "[]"),
-      consultationTypes: JSON.parse(profileData.consultationTypes || "[]"),
-      bankInfo: JSON.parse(profileData.bankInfo || "{}"),
-      mobileBanking: JSON.parse(profileData.mobileBanking || "{}"),
+      qualifications: profileData.qualifications ? JSON.parse(profileData.qualifications) : [],
+      currentWorkplace: profileData.currentWorkplace ? JSON.parse(profileData.currentWorkplace) : {},
+      availableDays: profileData.availableDays ? JSON.parse(profileData.availableDays) : [],
+      consultationTypes: profileData.consultationTypes ? JSON.parse(profileData.consultationTypes) : [],
+      bankInfo: profileData.bankInfo ? JSON.parse(profileData.bankInfo) : {},
+      mobileBanking: profileData.mobileBanking ? JSON.parse(profileData.mobileBanking) : {},
     };
 
     // Update doctor profile
@@ -260,6 +618,8 @@ export class AuthService {
 
     return doctor;
   }
+
+  // ==================== PASSWORD MANAGEMENT ====================
 
   // Forgot password
   static async forgotPassword(email) {
@@ -287,6 +647,7 @@ export class AuthService {
       data: {
         name: user.fullName,
         resetToken,
+        resetUrl: `${process.env.CLIENT_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`,
       },
     });
 
@@ -333,6 +694,8 @@ export class AuthService {
     return { message: "Password changed successfully" };
   }
 
+  // ==================== ADMIN MANAGEMENT ====================
+
   // Create admin user (superadmin only)
   static async createAdmin(adminData, createdBy) {
     const { email, phone, fullName, department, designation, permissions } =
@@ -376,7 +739,7 @@ export class AuthService {
         name: admin.fullName,
         email: admin.email,
         password: tempPassword,
-        loginUrl: `${process.env.CLIENT_URL}/admin/login`,
+        loginUrl: `${process.env.CLIENT_URL || "http://localhost:3000"}/admin/login`,
       },
     });
 
@@ -413,7 +776,7 @@ export class AuthService {
     admin.adminPermissions = permissions;
     await admin.save();
 
-    // Log the change (you can add audit log here)
+    // Log the change
     console.log(`Admin permissions updated by ${updatedBy}`);
 
     return {
@@ -422,6 +785,8 @@ export class AuthService {
       permissions: admin.adminPermissions,
     };
   }
+
+  // ==================== PROFILE MANAGEMENT ====================
 
   // Get user profile
   static async getProfile(userId) {
@@ -437,6 +802,8 @@ export class AuthService {
 
     if (user.role === "doctor") {
       profile = await Doctor.findOne({ user: user._id });
+    } else if (user.role === "patient") {
+      profile = await Patient.findOne({ user: user._id });
     }
 
     return { user, profile };
