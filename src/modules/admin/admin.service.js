@@ -10,7 +10,7 @@ import { sendSMS } from "../../services/sms.service.js";
 import { ApiError } from "../../utils/apiError.js";
 
 export class AdminService {
-  
+
   // ==================== Dashboard & Analytics ====================
 
   /**
@@ -74,20 +74,20 @@ export class AdminService {
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       Payment.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             status: "completed",
             createdAt: { $gte: today },
-          } 
+          }
         },
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       Payment.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             status: "completed",
             createdAt: { $gte: startOfMonth },
-          } 
+          }
         },
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
@@ -117,8 +117,8 @@ export class AdminService {
         completed: completedAppointments,
         cancelled: cancelledAppointments,
         upcoming: upcomingAppointments,
-        completionRate: totalAppointments > 0 
-          ? Math.round((completedAppointments / totalAppointments) * 100) 
+        completionRate: totalAppointments > 0
+          ? Math.round((completedAppointments / totalAppointments) * 100)
           : 0,
       },
       revenue: {
@@ -153,7 +153,7 @@ export class AdminService {
     const { fromDate, toDate, groupBy = "day" } = filters;
 
     const match = { status: "completed" };
-    
+
     if (fromDate || toDate) {
       match.createdAt = {};
       if (fromDate) match.createdAt.$gte = new Date(fromDate);
@@ -163,14 +163,14 @@ export class AdminService {
     let groupId;
     switch (groupBy) {
       case "day":
-        groupId = { 
+        groupId = {
           year: { $year: "$createdAt" },
           month: { $month: "$createdAt" },
           day: { $dayOfMonth: "$createdAt" },
         };
         break;
       case "month":
-        groupId = { 
+        groupId = {
           year: { $year: "$createdAt" },
           month: { $month: "$createdAt" },
         };
@@ -301,7 +301,7 @@ export class AdminService {
 
     if (user.role === "doctor") {
       profile = await Doctor.findOne({ user: userId });
-      
+
       // Get doctor stats
       const [totalAppointments, totalPatients, totalEarnings] = await Promise.all([
         Appointment.countDocuments({ doctor: profile?._id }),
@@ -319,7 +319,7 @@ export class AdminService {
       };
     } else if (user.role === "patient") {
       profile = await Patient.findOne({ user: userId });
-      
+
       // Get patient stats
       const [totalAppointments, totalSpent] = await Promise.all([
         Appointment.countDocuments({ patient: profile?._id }),
@@ -369,9 +369,8 @@ export class AdminService {
 
     await sendSMS({
       to: user.phone,
-      message: `Your account has been ${statusData.isActive ? "activated" : "deactivated"}. ${
-        statusData.reason ? `Reason: ${statusData.reason}` : ""
-      }`,
+      message: `Your account has been ${statusData.isActive ? "activated" : "deactivated"}. ${statusData.reason ? `Reason: ${statusData.reason}` : ""
+        }`,
     });
 
     return {
@@ -455,7 +454,7 @@ export class AdminService {
         fullName: { $regex: search, $options: "i" },
         role: "doctor",
       }).select("_id");
-      
+
       query.user = { $in: users.map(u => u._id) };
     }
 
@@ -502,8 +501,8 @@ export class AdminService {
     await doctor.save();
 
     // Send notification to doctor
-    const subject = status === "verified" 
-      ? "Doctor Verification Approved" 
+    const subject = status === "verified"
+      ? "Doctor Verification Approved"
       : "Doctor Verification Update";
 
     await sendEmail({
@@ -520,9 +519,8 @@ export class AdminService {
 
     await sendSMS({
       to: doctor.user.phone,
-      message: `Your doctor verification status has been updated to ${status}. ${
-        notes ? `Notes: ${notes}` : ""
-      }`,
+      message: `Your doctor verification status has been updated to ${status}. ${notes ? `Notes: ${notes}` : ""
+        }`,
     });
 
     return doctor;
@@ -543,7 +541,7 @@ export class AdminService {
     }
 
     doctor.documents[documentType].verified = verificationData.verified;
-    
+
     if (verificationData.notes) {
       doctor.documents[documentType].verificationNotes = verificationData.notes;
     }
@@ -580,7 +578,7 @@ export class AdminService {
 
     // Get document URLs from media collection
     const documents = {};
-    
+
     for (const [key, doc] of Object.entries(doctor.documents)) {
       if (doc.public_id) {
         const media = await Media.findOne({ public_id: doc.public_id });
@@ -793,7 +791,7 @@ export class AdminService {
   static async processWithdrawal(withdrawalId, processData) {
     // This would interact with a Withdrawal model
     // For now, we'll just update doctor's pendingWithdrawal
-    
+
     const { doctorId, amount, status, notes, transactionId } = processData;
 
     const doctor = await Doctor.findById(doctorId);
@@ -812,9 +810,8 @@ export class AdminService {
 
     await sendSMS({
       to: doctorUser.phone,
-      message: `Your withdrawal request of ${amount} BDT has been ${status}. ${
-        transactionId ? `Transaction ID: ${transactionId}` : ""
-      }`,
+      message: `Your withdrawal request of ${amount} BDT has been ${status}. ${transactionId ? `Transaction ID: ${transactionId}` : ""
+        }`,
     });
 
     return {
@@ -840,7 +837,7 @@ export class AdminService {
 
     const oldRate = doctor.commissionRate;
     doctor.commissionRate = commissionData.commissionRate;
-    
+
     if (commissionData.effectiveFrom) {
       doctor.commissionEffectiveFrom = commissionData.effectiveFrom;
     }
@@ -874,7 +871,7 @@ export class AdminService {
     const { specialization, commissionRate, applyToAll } = updateData;
 
     let query = {};
-    
+
     if (!applyToAll && specialization) {
       query.specialization = specialization;
     }
@@ -897,7 +894,7 @@ export class AdminService {
     const { fromDate, toDate } = filters;
 
     const match = { status: "completed" };
-    
+
     if (fromDate || toDate) {
       match.createdAt = {};
       if (fromDate) match.createdAt.$gte = new Date(fromDate);
@@ -1203,4 +1200,183 @@ export class AdminService {
       },
     };
   }
+
+  static async getDoctorsByStatus(status, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const query = {};
+    if (status && status !== "all") {
+      query.verificationStatus = status;
+    }
+
+    const doctors = await Doctor.find(query)
+      .populate("user", "fullName email phone createdAt profileImage")
+      .populate("verifiedBy", "fullName email")
+      .skip(skip)
+      .limit(limit)
+      .sort({ profileCompletedAt: -1, createdAt: -1 });
+
+    const total = await Doctor.countDocuments(query);
+
+    // Add profile completion info
+    const doctorsWithInfo = doctors.map(doctor => {
+      const doc = doctor.toObject();
+      const hasCompletedProfile = !!(
+        doctor.specialization &&
+        doctor.consultationFee &&
+        doctor.documents?.bmdcCertificate?.url &&
+        doctor.documents?.profilePhoto?.url
+      );
+
+      return {
+        ...doc,
+        hasCompletedProfile,
+        isReadyForReview: doctor.verificationStatus === "profile_submitted",
+      };
+    });
+
+    return {
+      doctors: doctorsWithInfo,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  static async getDoctorForReview(doctorId) {
+    const doctor = await Doctor.findById(doctorId)
+      .populate("user", "fullName email phone createdAt dateOfBirth gender")
+      .populate("verifiedBy", "fullName email");
+
+    if (!doctor) {
+      throw new Error("Doctor not found");
+    }
+
+    // Calculate profile completion percentage
+    const completionSteps = {
+      hasSpecialization: !!doctor.specialization,
+      hasQualifications: doctor.qualifications && doctor.qualifications.length > 0,
+      hasExperience: doctor.experienceYears > 0,
+      hasWorkplace: doctor.currentWorkplace?.name,
+      hasFee: doctor.consultationFee > 0,
+      hasSchedule: doctor.availableDays && doctor.availableDays.length > 0,
+      hasBmdcCert: !!doctor.documents?.bmdcCertificate?.url,
+      hasNid: !!doctor.documents?.nid?.url,
+      hasMbbsCert: !!doctor.documents?.mbbsCertificate?.url,
+      hasProfilePhoto: !!doctor.documents?.profilePhoto?.url,
+      hasBankInfo: !!(doctor.bankInfo?.accountNumber || doctor.mobileBanking?.bKash),
+    };
+
+    const completedCount = Object.values(completionSteps).filter(Boolean).length;
+    const completionPercentage = (completedCount / Object.keys(completionSteps).length) * 100;
+
+    return {
+      doctor,
+      profileCompletion: {
+        percentage: Math.round(completionPercentage),
+        steps: completionSteps,
+      },
+    };
+  }
+  static async verifyDoctor(adminId, doctorId, status, notes) {
+    const admin = await User.findById(adminId);
+    if (!admin || !["admin", "superadmin"].includes(admin.role)) {
+      throw new Error("Unauthorized");
+    }
+
+    const doctor = await Doctor.findById(doctorId).populate("user");
+    if (!doctor) {
+      throw new Error("Doctor not found");
+    }
+
+    const previousStatus = doctor.verificationStatus;
+
+    doctor.verificationStatus = status;
+    doctor.verifiedBy = adminId;
+    doctor.verifiedAt = new Date();
+
+    if (status === "rejected") {
+      doctor.rejectionReason = notes;
+      doctor.verificationNotes = notes;
+    } else if (status === "verified") {
+      doctor.verificationNotes = notes || "Account verified and activated";
+    }
+
+    await doctor.save();
+
+    // Send email notification
+    if (status === "verified") {
+      await sendEmail({
+        to: doctor.user.email,
+        subject: "✅ Your Doctor Account is Now Verified & Active!",
+        template: "doctor-verified-final",
+        data: {
+          name: doctor.user.fullName,
+          message: notes || "Your account has been fully verified and activated. You can now start accepting appointments from patients.",
+          loginUrl: `${process.env.CLIENT_URL}/login`,
+          dashboardUrl: `${process.env.CLIENT_URL}/doctor/dashboard`,
+        },
+      });
+
+      await sendSMS({
+        to: doctor.user.phone,
+        message: `Congratulations Dr. ${doctor.user.fullName}! Your account is now verified and active. Welcome to Doccure!`,
+      });
+    }
+
+    // Create audit log
+    await this.createAuditLog({
+      adminId,
+      action: "VERIFY_DOCTOR",
+      targetId: doctorId,
+      targetType: "Doctor",
+      previousStatus,
+      newStatus: status,
+      notes,
+    });
+
+    return {
+      doctorId: doctor._id,
+      email: doctor.user.email,
+      name: doctor.user.fullName,
+      previousStatus,
+      currentStatus: status,
+      verifiedAt: doctor.verifiedAt,
+    };
+  }
+
+  static async getVerificationStats() {
+    const stats = await Doctor.aggregate([
+      {
+        $group: {
+          _id: "$verificationStatus",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const result = {
+      pending: 0,
+      profile_submitted: 0,
+      under_review: 0,
+      verified: 0,
+      rejected: 0,
+      suspended: 0,
+    };
+
+    stats.forEach(stat => {
+      result[stat._id] = stat.count;
+    });
+
+    return result;
+  }
+
+  static async createAuditLog(logData) {
+    // Create AuditLog model if needed
+    console.log("Audit Log:", logData);
+  }
+  
 }

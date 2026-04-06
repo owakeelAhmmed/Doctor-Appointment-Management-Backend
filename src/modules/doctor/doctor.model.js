@@ -9,16 +9,17 @@ const doctorSchema = new mongoose.Schema(
       unique: true,
     },
     
-    // Professional Information
+    // ========== STEP 1: MINIMUM REGISTRATION ==========
     bmdcRegNo: {
       type: String,
       required: [true, "BMDC Registration Number is required"],
       unique: true,
       trim: true,
     },
+    
+    // ========== STEP 2: COMPLETE PROFILE (After admin sees pending) ==========
     specialization: {
       type: String,
-      required: [true, "Specialization is required"],
       trim: true,
     },
     qualifications: [
@@ -26,71 +27,21 @@ const doctorSchema = new mongoose.Schema(
         degree: String,
         institute: String,
         year: Number,
-        certificate: {
-          url: String,
-          public_id: String,
-        },
+        certificate: { url: String, public_id: String },
       },
     ],
     experienceYears: {
       type: Number,
-      required: true,
       min: 0,
+      default: 0,
     },
-    
-    // Current Workplace
     currentWorkplace: {
       name: String,
       address: String,
       contactNumber: String,
     },
-    
-    // Documents for Verification
-    documents: {
-      bmdcCertificate: {
-        url: String,
-        public_id: String,
-        verified: { type: Boolean, default: false },
-      },
-      nid: {
-        url: String,
-        public_id: String,
-        verified: { type: Boolean, default: false },
-      },
-      mbbsCertificate: {
-        url: String,
-        public_id: String,
-        verified: { type: Boolean, default: false },
-      },
-      specializationCertificate: {
-        url: String,
-        public_id: String,
-        verified: { type: Boolean, default: false },
-      },
-      profilePhoto: {
-        url: String,
-        public_id: String,
-        verified: { type: Boolean, default: false },
-      },
-    },
-    
-    // Verification Status
-    verificationStatus: {
-      type: String,
-      enum: ["pending", "under_review", "verified", "rejected", "suspended"],
-      default: "pending",
-    },
-    verificationNotes: String,
-    verifiedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    verifiedAt: Date,
-    
-    // Practice Settings
     consultationFee: {
       type: Number,
-      required: true,
       min: 0,
     },
     availableDays: [
@@ -110,8 +61,6 @@ const doctorSchema = new mongoose.Schema(
         isAvailable: { type: Boolean, default: true },
       },
     ],
-    
-    // Consultation Types Offered
     consultationTypes: [
       {
         type: String,
@@ -119,7 +68,16 @@ const doctorSchema = new mongoose.Schema(
       },
     ],
     
-    // Bank Information for Payment
+    // Documents
+    documents: {
+      bmdcCertificate: { url: String, public_id: String, verified: { type: Boolean, default: false } },
+      nid: { url: String, public_id: String, verified: { type: Boolean, default: false } },
+      mbbsCertificate: { url: String, public_id: String, verified: { type: Boolean, default: false } },
+      specializationCertificate: { url: String, public_id: String, verified: { type: Boolean, default: false } },
+      profilePhoto: { url: String, public_id: String, verified: { type: Boolean, default: false } },
+    },
+    
+    // Bank Information
     bankInfo: {
       bankName: String,
       accountNumber: String,
@@ -133,47 +91,45 @@ const doctorSchema = new mongoose.Schema(
       rocket: String,
     },
     
+    // ========== VERIFICATION STATUS (CRITICAL) ==========
+    verificationStatus: {
+      type: String,
+      enum: [
+        "pending",              // Step 1: Just registered, waiting to submit full profile
+        "profile_submitted",    // Step 2: Submitted full profile, waiting for admin review
+        "under_review",         // Admin is reviewing
+        "verified",             // Step 3: Approved - FULLY ACTIVE
+        "rejected",             // Rejected
+        "suspended"             // Suspended
+      ],
+      default: "pending",
+    },
+    verificationNotes: String,
+    rejectionReason: String,
+    verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    verifiedAt: Date,
+    
+    // When profile was completed
+    profileCompletedAt: Date,
+    
     // Rating and Reviews
-    rating: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 5,
-    },
-    totalReviews: {
-      type: Number,
-      default: 0,
-    },
-    totalPatients: {
-      type: Number,
-      default: 0,
-    },
+    rating: { type: Number, default: 0, min: 0, max: 5 },
+    totalReviews: { type: Number, default: 0 },
+    totalPatients: { type: Number, default: 0 },
     
-    // Commission Settings
-    commissionRate: {
-      type: Number,
-      default: 20, // 20% default commission
-      min: 0,
-      max: 100,
-    },
-    
-    // Earnings
-    totalEarnings: {
-      type: Number,
-      default: 0,
-    },
-    pendingWithdrawal: {
-      type: Number,
-      default: 0,
-    },
+    // Commission & Earnings
+    commissionRate: { type: Number, default: 20, min: 0, max: 100 },
+    totalEarnings: { type: Number, default: 0 },
+    pendingWithdrawal: { type: Number, default: 0 },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Index for search
 doctorSchema.index({ specialization: 1, verificationStatus: 1 });
-doctorSchema.index({ "availableDays.day": 1, consultationFee: 1 });
+doctorSchema.index({ bmdcRegNo: 1 });
+doctorSchema.index({ verificationStatus: 1, createdAt: 1 });
 
 export const Doctor = mongoose.model("Doctor", doctorSchema);

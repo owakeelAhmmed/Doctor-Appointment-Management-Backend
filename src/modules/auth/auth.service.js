@@ -7,13 +7,13 @@ import { uploadMedia } from "../upload/media.service.js";
 import { Patient } from "../patient/patient.model.js";
 
 export class AuthService {
-  
+
   // ==================== REGISTER ====================
-  
+
   // Register new user (Patient or Doctor)
-  static async register(userData, files = null) {
-    const { email, phone, role = "patient" } = userData;
-    
+  static async register(userData) {
+    const { email, phone, role = "patient", bmdcRegNo } = userData;
+
     // Check if user exists
     const existingUser = await User.findOne({
       $or: [{ email }, { phone }],
@@ -26,130 +26,50 @@ export class AuthService {
     // Create user
     const user = await User.create(userData);
 
-    // ==================== PATIENT REGISTRATION ====================
+    // ========== PATIENT REGISTRATION ==========
     if (user.role === "patient") {
-      try {
-        await Patient.create({
-          user: user._id,
-          totalAppointments: 0,
-          totalSpent: 0,
-          favoriteDoctors: [],
-          medicalHistory: [],
-          allergies: [],
-          chronicDiseases: [],
-        });
-        console.log(`✅ Patient profile created for user: ${user._id}`);
-      } catch (error) {
-        console.error("Error creating patient profile:", error);
-      }
+      await Patient.create({
+        user: user._id,
+        totalAppointments: 0,
+        totalSpent: 0,
+      });
     }
 
-    // ==================== DOCTOR REGISTRATION WITH VERIFICATION ====================
+    // ========== DOCTOR REGISTRATION (MINIMAL) ==========
     if (user.role === "doctor") {
-      try {
-        // Prepare doctor profile data
-        const doctorData = {
-          user: user._id,
-          bmdcRegNo: userData.bmdcRegNo,
-          specialization: userData.specialization,
-          qualifications: userData.qualifications || [],
-          experienceYears: userData.experienceYears,
-          currentWorkplace: userData.currentWorkplace,
-          consultationFee: userData.consultationFee,
-          consultationTypes: userData.consultationTypes || ["in-person", "video"],
-          verificationStatus: "pending", // CRITICAL: Pending by default
-          totalPatients: 0,
-          totalEarnings: 0,
-          rating: 0,
-          totalReviews: 0,
-          availableDays: [],
-        };
-
-        // Add bank info if provided
-        if (userData.bankName || userData.accountNumber) {
-          doctorData.bankInfo = {
-            bankName: userData.bankName || "",
-            accountNumber: userData.accountNumber || "",
-            accountHolderName: userData.accountHolderName || "",
-            routingNumber: userData.routingNumber || "",
-            branchName: userData.branchName || "",
-          };
-        }
-
-        // Add mobile banking if provided
-        if (userData.bKashNumber || userData.nagadNumber) {
-          doctorData.mobileBanking = {
-            bKash: userData.bKashNumber || "",
-            nagad: userData.nagadNumber || "",
-            rocket: userData.rocketNumber || "",
-          };
-        }
-
-        // Handle document uploads if files provided
-        if (files) {
-          doctorData.documents = {
-            bmdcCertificate: files.bmdcCertificate ? {
-              url: await this.uploadDocument(files.bmdcCertificate[0]),
-              public_id: null,
-              verified: false,
-              uploadedAt: new Date(),
-            } : null,
-            nid: files.nidCard ? {
-              url: await this.uploadDocument(files.nidCard[0]),
-              public_id: null,
-              verified: false,
-              uploadedAt: new Date(),
-            } : null,
-            mbbsCertificate: files.mbbsCertificate ? {
-              url: await this.uploadDocument(files.mbbsCertificate[0]),
-              public_id: null,
-              verified: false,
-              uploadedAt: new Date(),
-            } : null,
-            specializationCertificate: files.specializationCertificate ? {
-              url: await this.uploadDocument(files.specializationCertificate[0]),
-              public_id: null,
-              verified: false,
-              uploadedAt: new Date(),
-            } : null,
-            profilePhoto: files.profilePhoto ? {
-              url: await this.uploadDocument(files.profilePhoto[0]),
-              public_id: null,
-              verified: false,
-              uploadedAt: new Date(),
-            } : null,
-          };
-        }
-
-        await Doctor.create(doctorData);
-        console.log(`✅ Doctor profile created for user: ${user._id} (pending verification)`);
-
-        // Send notification to admins about new doctor registration
-        await this.notifyAdminsForVerification(user);
-        
-      } catch (error) {
-        console.error("Error creating doctor profile:", error);
-        // Rollback user creation if doctor profile fails
+      const existingDoctor = await Doctor.findOne({ bmdcRegNo });
+      if (existingDoctor) {
         await User.findByIdAndDelete(user._id);
-        throw new Error("Failed to create doctor profile: " + error.message);
+        throw new Error("Doctor already registered with this BMDC number");
       }
+
+      await Doctor.create({
+        user: user._id,
+        bmdcRegNo,
+        verificationStatus: "pending",
+      });
+
+      console.log(`✅ Doctor registered with minimal info: ${user.email}`);
     }
 
-    // Generate OTP (only email OTP, phone OTP optional)
+    // Generate OTP
     const emailOTP = user.setEmailOTP();
-    
-    // Only generate phone OTP if phone exists
-    let phoneOTP = null;
-    if (user.phone) {
-      phoneOTP = user.setPhoneOTP();
-    }
-    
     await user.save();
 
-    // Send OTPs
-    await this.sendOTPEmails(user, emailOTP, phoneOTP).catch(console.error);
+    // ========== FIX: Direct email sending (no method call) ==========
+    // Send email directly
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: "Email Verification OTP",
+        template: "email-otp",
+        data: { otp: emailOTP, name: user.fullName, role: user.role },
+      });
+      console.log(`✅ OTP email sent to ${user.email}`);
+    } catch (error) {
+      console.error("Failed to send OTP email:", error);
+    }
 
-    // Prepare response based on role
     const response = {
       userId: user._id,
       email: user.email,
@@ -160,10 +80,10 @@ export class AuthService {
       response.phone = user.phone;
     }
 
-    // Add verification message for doctors
     if (user.role === "doctor") {
-      response.message = "Registration successful! Your application is pending admin verification. You will receive an email once approved. This usually takes 24-48 hours.";
-      response.verificationStatus = "pending";
+      response.message = "Registration successful! Please verify your email. After verification, you will need to complete your profile.";
+    } else {
+      response.message = "Registration successful. Please verify your email.";
     }
 
     return response;
@@ -197,7 +117,7 @@ export class AuthService {
       }),
     ];
 
-    // Only send SMS if phone OTP exists
+    // Only send SMS if phone OTP exists and phone number is available
     if (phoneOTP && user.phone) {
       promises.push(
         sendSMS({
@@ -213,8 +133,8 @@ export class AuthService {
   // Notify admins about new doctor registration
   static async notifyAdminsForVerification(user) {
     try {
-      const admins = await User.find({ 
-        role: { $in: ["admin", "superadmin"] } 
+      const admins = await User.find({
+        role: { $in: ["admin", "superadmin"] }
       }).select("email fullName");
 
       if (admins.length === 0) return;
@@ -330,22 +250,16 @@ export class AuthService {
     // Check if account is locked
     if (user.lockUntil && user.lockUntil > Date.now()) {
       const minutesLeft = Math.ceil((user.lockUntil - Date.now()) / 60000);
-      throw new Error(
-        `Account is locked. Try again after ${minutesLeft} minutes`,
-      );
+      throw new Error(`Account is locked. Try again after ${minutesLeft} minutes`);
     }
 
     // Check password
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
-      // Increment login attempts
       user.loginAttempts += 1;
-
-      // Lock account after 5 failed attempts
       if (user.loginAttempts >= 5) {
-        user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+        user.lockUntil = new Date(Date.now() + 30 * 60 * 1000);
       }
-
       await user.save();
       throw new Error("Invalid credentials");
     }
@@ -356,25 +270,44 @@ export class AuthService {
     user.lastLogin = new Date();
     await user.save();
 
-    // CRITICAL: Check doctor verification status
+    // ========== CRITICAL: CHECK DOCTOR STATUS ==========
     if (user.role === "doctor") {
       const doctor = await Doctor.findOne({ user: user._id });
-      
+
       if (!doctor) {
         throw new Error("Doctor profile not found");
       }
-      
+
+      // Check verification status
       if (doctor.verificationStatus !== "verified") {
-        let errorMessage = `Your doctor account is ${doctor.verificationStatus}. `;
-        
-        if (doctor.verificationStatus === "pending") {
-          errorMessage += "Please wait for admin approval. You will receive an email once verified.";
-        } else if (doctor.verificationStatus === "rejected") {
-          errorMessage += `Reason: ${doctor.verificationNotes || "Please contact support for more information."}`;
-        } else if (doctor.verificationStatus === "suspended") {
-          errorMessage += "Your account has been suspended. Please contact support.";
+        let errorMessage = "";
+        let nextStep = null;
+
+        switch (doctor.verificationStatus) {
+          case "pending":
+            errorMessage = "Please complete your profile first. Complete your profile to continue.";
+            nextStep = "complete_profile";
+            break;
+          case "profile_submitted":
+            errorMessage = "Your profile is pending admin review. You will receive an email once verified. This usually takes 24-48 hours.";
+            nextStep = "wait_for_verification";
+            break;
+          case "under_review":
+            errorMessage = "Your profile is currently under review by our admin team. You will be notified once verified.";
+            nextStep = "wait_for_verification";
+            break;
+          case "rejected":
+            errorMessage = `Your application has been rejected. Reason: ${doctor.rejectionReason || doctor.verificationNotes || "Please contact support for more information."}`;
+            nextStep = "contact_support";
+            break;
+          case "suspended":
+            errorMessage = "Your account has been suspended. Please contact support for assistance.";
+            nextStep = "contact_support";
+            break;
+          default:
+            errorMessage = "Your account is not active. Please contact support.";
         }
-        
+
         throw new Error(errorMessage);
       }
     }
@@ -396,7 +329,6 @@ export class AuthService {
       },
     };
   }
-
   // ==================== DOCTOR VERIFICATION (ADMIN) ====================
 
   // Admin: Verify doctor
@@ -439,7 +371,7 @@ export class AuthService {
         },
       });
       console.log(`✅ Doctor ${user.email} account verified`);
-      
+
     } else if (status === "rejected") {
       await sendEmail({
         to: user.email,
@@ -452,7 +384,7 @@ export class AuthService {
         },
       });
       console.log(`❌ Doctor ${user.email} application rejected`);
-      
+
     } else if (status === "suspended") {
       await sendEmail({
         to: user.email,
@@ -523,7 +455,7 @@ export class AuthService {
 
     // Search by doctor name if provided
     if (search) {
-      doctors = doctors.filter(doctor => 
+      doctors = doctors.filter(doctor =>
         doctor.user?.fullName?.toLowerCase().includes(search.toLowerCase()) ||
         doctor.user?.email?.toLowerCase().includes(search.toLowerCase()) ||
         doctor.specialization?.toLowerCase().includes(search.toLowerCase())
@@ -564,25 +496,78 @@ export class AuthService {
 
   // Complete doctor profile (for existing doctors)
   static async completeDoctorProfile(userId, profileData, files) {
-    let doctor = await Doctor.findOne({ user: userId });
+    const doctor = await Doctor.findOne({ user: userId });
 
     if (!doctor) {
-      doctor = new Doctor({ user: userId });
+      throw new Error("Doctor profile not found");
     }
 
-    // Upload documents if provided
-    const documents = { ...doctor.documents };
+    // Check current status
+    if (doctor.verificationStatus === "verified") {
+      throw new Error("Your profile is already verified and active");
+    }
 
+    if (doctor.verificationStatus === "under_review") {
+      throw new Error("Your profile is already under review. Please wait for admin approval.");
+    }
+
+    // Parse JSON data
+    const parsedData = {};
+
+    if (profileData.qualifications) {
+      parsedData.qualifications = typeof profileData.qualifications === 'string'
+        ? JSON.parse(profileData.qualifications)
+        : profileData.qualifications;
+    }
+
+    if (profileData.currentWorkplace) {
+      parsedData.currentWorkplace = typeof profileData.currentWorkplace === 'string'
+        ? JSON.parse(profileData.currentWorkplace)
+        : profileData.currentWorkplace;
+    }
+
+    if (profileData.availableDays) {
+      parsedData.availableDays = typeof profileData.availableDays === 'string'
+        ? JSON.parse(profileData.availableDays)
+        : profileData.availableDays;
+    }
+
+    if (profileData.consultationTypes) {
+      parsedData.consultationTypes = typeof profileData.consultationTypes === 'string'
+        ? JSON.parse(profileData.consultationTypes)
+        : profileData.consultationTypes;
+    }
+
+    if (profileData.bankInfo) {
+      parsedData.bankInfo = typeof profileData.bankInfo === 'string'
+        ? JSON.parse(profileData.bankInfo)
+        : profileData.bankInfo;
+    }
+
+    if (profileData.mobileBanking) {
+      parsedData.mobileBanking = typeof profileData.mobileBanking === 'string'
+        ? JSON.parse(profileData.mobileBanking)
+        : profileData.mobileBanking;
+    }
+
+    // Add basic fields
+    parsedData.specialization = profileData.specialization;
+    parsedData.experienceYears = parseInt(profileData.experienceYears) || 0;
+    parsedData.consultationFee = parseInt(profileData.consultationFee) || 0;
+    parsedData.consultationTypes = profileData.consultationTypes || ["in-person", "video"];
+
+    // Handle file uploads
     if (files) {
+      const documents = { ...doctor.documents };
+
       for (const [key, fileArray] of Object.entries(files)) {
         if (fileArray && fileArray[0]) {
-          const file = fileArray[0];
           const uploaded = await uploadMedia({
-            buffer: file.buffer,
-            originalFilename: file.originalname,
+            buffer: fileArray[0].buffer,
+            originalFilename: fileArray[0].originalname,
             ownerType: "doctors",
             ownerId: userId,
-            folder: "verification",
+            folder: "doctor-verification",
           });
 
           documents[key] = {
@@ -592,31 +577,178 @@ export class AuthService {
           };
         }
       }
+
+      parsedData.documents = documents;
     }
 
-    // Parse JSON strings
-    const parsedData = {
-      ...profileData,
-      qualifications: profileData.qualifications ? JSON.parse(profileData.qualifications) : [],
-      currentWorkplace: profileData.currentWorkplace ? JSON.parse(profileData.currentWorkplace) : {},
-      availableDays: profileData.availableDays ? JSON.parse(profileData.availableDays) : [],
-      consultationTypes: profileData.consultationTypes ? JSON.parse(profileData.consultationTypes) : [],
-      bankInfo: profileData.bankInfo ? JSON.parse(profileData.bankInfo) : {},
-      mobileBanking: profileData.mobileBanking ? JSON.parse(profileData.mobileBanking) : {},
-    };
+    // Update status to profile_submitted (Step 2 complete)
+    parsedData.verificationStatus = "profile_submitted";
+    parsedData.profileCompletedAt = new Date();
 
-    // Update doctor profile
-    doctor = await Doctor.findOneAndUpdate(
+    const updatedDoctor = await Doctor.findOneAndUpdate(
       { user: userId },
-      {
-        ...parsedData,
-        documents,
-        verificationStatus: "pending",
-      },
-      { new: true, upsert: true },
+      parsedData,
+      { new: true, runValidators: true }
     );
 
-    return doctor;
+    // Notify admins that doctor has submitted full profile
+    await this.notifyAdminsForReview(updatedDoctor);
+
+    return {
+      doctor: updatedDoctor,
+      message: "Profile completed successfully! Your information is now pending admin review. You will receive an email once verified.",
+      status: "profile_submitted"
+    };
+  }
+
+
+  // ========== NOTIFY ADMINS FOR REVIEW ==========
+  static async notifyAdminsForReview(doctor) {
+    try {
+      const user = await User.findById(doctor.user);
+      const admins = await User.find({
+        role: { $in: ["admin", "superadmin"] }
+      }).select("email fullName");
+
+      for (const admin of admins) {
+        await sendEmail({
+          to: admin.email,
+          subject: "Doctor Profile Ready for Review",
+          template: "admin-doctor-review",
+          data: {
+            adminName: admin.fullName,
+            doctorName: user.fullName,
+            doctorEmail: user.email,
+            doctorId: doctor._id,
+            reviewUrl: `${process.env.ADMIN_URL}/admin/doctors/${doctor._id}/review`,
+          },
+        });
+      }
+
+      console.log(`✅ Notified admins for doctor review: ${user.email}`);
+    } catch (error) {
+      console.error("Failed to notify admins:", error);
+    }
+  }
+
+
+  // ========== ADMIN: GET DOCTORS BY STATUS ==========
+  static async getDoctorsByStatus(status, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const query = {};
+    if (status && status !== "all") {
+      query.verificationStatus = status;
+    }
+
+    const doctors = await Doctor.find(query)
+      .populate("user", "fullName email phone createdAt")
+      .populate("verifiedBy", "fullName email")
+      .skip(skip)
+      .limit(limit)
+      .sort({ profileCompletedAt: -1, createdAt: -1 });
+
+    const total = await Doctor.countDocuments(query);
+
+    return {
+      doctors,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ========== ADMIN: VERIFY DOCTOR (STEP 3 - FINAL) ==========
+  static async verifyDoctor(adminId, doctorId, status, notes = "") {
+    // Check admin authorization
+    const admin = await User.findById(adminId);
+    if (!admin || !["admin", "superadmin"].includes(admin.role)) {
+      throw new Error("Unauthorized: Only admins can verify doctors");
+    }
+
+    // Find doctor
+    const doctor = await Doctor.findById(doctorId).populate("user");
+    if (!doctor) {
+      throw new Error("Doctor not found");
+    }
+
+    // Check current status
+    if (doctor.verificationStatus === "verified") {
+      throw new Error("Doctor is already verified");
+    }
+
+    const previousStatus = doctor.verificationStatus;
+
+    // Update verification status
+    doctor.verificationStatus = status;
+    doctor.verifiedBy = adminId;
+    doctor.verifiedAt = new Date();
+
+    if (status === "rejected") {
+      doctor.rejectionReason = notes;
+      doctor.verificationNotes = notes;
+    } else if (status === "verified") {
+      doctor.verificationNotes = notes || "Account verified successfully";
+    } else {
+      doctor.verificationNotes = notes;
+    }
+
+    await doctor.save();
+
+    // Send email notification to doctor
+    if (status === "verified") {
+      await sendEmail({
+        to: doctor.user.email,
+        subject: "🎉 Congratulations! Your Doctor Account is Verified",
+        template: "doctor-verified",
+        data: {
+          name: doctor.user.fullName,
+          message: notes || "Your account has been verified. You can now start accepting appointments.",
+          loginUrl: `${process.env.CLIENT_URL}/login`,
+          dashboardUrl: `${process.env.CLIENT_URL}/doctor/dashboard`,
+        },
+      });
+
+      // Send SMS notification
+      await sendSMS({
+        to: doctor.user.phone,
+        message: `Congratulations Dr. ${doctor.user.fullName}! Your account has been verified. You can now login and start practicing.`,
+      });
+
+      console.log(`✅ Doctor verified: ${doctor.user.email}`);
+
+    } else if (status === "rejected") {
+      await sendEmail({
+        to: doctor.user.email,
+        subject: "Doctor Application Update - Action Required",
+        template: "doctor-rejected",
+        data: {
+          name: doctor.user.fullName,
+          reason: notes || "Your application did not meet our verification criteria.",
+          supportEmail: process.env.SUPPORT_EMAIL || "support@doccure.com",
+          reapplyUrl: `${process.env.CLIENT_URL}/doctor/complete-profile`,
+        },
+      });
+
+      console.log(`❌ Doctor rejected: ${doctor.user.email}`);
+    }
+
+    // Log the verification
+    console.log(`Doctor ${doctor.user.email} status changed from ${previousStatus} to ${status} by admin ${admin.email}`);
+
+    return {
+      doctorId: doctor._id,
+      userId: doctor.user._id,
+      email: doctor.user.email,
+      fullName: doctor.user.fullName,
+      previousStatus,
+      currentStatus: status,
+      verifiedAt: doctor.verifiedAt,
+      notes: doctor.verificationNotes,
+    };
   }
 
   // ==================== PASSWORD MANAGEMENT ====================

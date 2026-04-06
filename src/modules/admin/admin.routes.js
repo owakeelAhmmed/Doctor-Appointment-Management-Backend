@@ -161,4 +161,33 @@ router.get(
   AdminController.getPatientReport
 );
 
+// admin.routes.js - Add these routes
+
+// Doctor Verification Routes
+router.get(
+  "/doctors/verification/:status?",
+  authorize("admin", "superadmin"),
+  AdminController.getDoctorsByStatus
+);
+
+router.get(
+  "/doctors/:doctorId/review",
+  authorize("admin", "superadmin"),
+  AdminController.getDoctorForReview
+);
+
+router.put(
+  "/doctors/:doctorId/verify",
+  authorize("admin", "superadmin"),
+  validation.verifyDoctorValidation,
+  validateRequest,
+  AdminController.verifyDoctor
+);
+
+router.get(
+  "/verification/stats",
+  authorize("admin", "superadmin"),
+  AdminController.getVerificationStats
+);
+
 export default router;
