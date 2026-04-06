@@ -5,11 +5,13 @@ import app from "./app/app.js";
 import { connectCloudinary } from "./config/cloudinary.js";
 import { connectDB } from "./config/db.js";
 import { MONGODB_URI, PORT } from "./config/env.js";
+import { seedSuperAdmin } from "./utils/seedSuperAdmin.js";
 
 (async () => {
   try {
     await connectDB(MONGODB_URI);
-    
+
+    await seedSuperAdmin();
     connectCloudinary();
 
     app.listen(PORT, () => {
