@@ -1,18 +1,15 @@
 import { User } from "./auth.model.js";
 import { Doctor } from "../doctor/doctor.model.js";
-// import { sendEmail } from "../../utils/email.service.js";
-// import { sendSMS } from "../../utils/sms.service.js";
-// import { uploadMedia } from "../../utils/media.util.js";
 import crypto from "crypto";
 import { sendEmail } from "../../services/email.service.js";
 import { sendSMS } from "../../services/sms.service.js";
 import { uploadMedia } from "../upload/media.service.js";
 
 export class AuthService {
-  
+
   // Register new user
   static async register(userData) {
-    const { email, phone } = userData;
+    const { email, phone, role, bmdcRegNo } = userData;
 
     // Check if user exists
     const existingUser = await User.findOne({
@@ -26,12 +23,29 @@ export class AuthService {
     // Create user
     const user = await User.create(userData);
 
+    // If doctor, create minimal doctor profile
+    if (role === "doctor") {
+      // Check if BMDC already exists
+      const existingDoctor = await Doctor.findOne({ bmdcRegNo });
+      if (existingDoctor) {
+        await User.findByIdAndDelete(user._id);
+        throw new Error("Doctor already registered with this BMDC number");
+      }
+
+      await Doctor.create({
+        user: user._id,
+        bmdcRegNo,
+        verificationStatus: "pending",
+        profileCompletionStep: 1,
+      });
+    }
+
     // Generate OTPs
     const emailOTP = user.setEmailOTP();
     const phoneOTP = user.setPhoneOTP();
     await user.save();
 
-    // Send OTPs (don't await to speed up response)
+    // Send OTPs
     this.sendOTPEmails(user, emailOTP, phoneOTP).catch(console.error);
 
     return {
@@ -39,6 +53,10 @@ export class AuthService {
       email: user.email,
       phone: user.phone,
       role: user.role,
+      requiresVerification: role === "doctor",
+      message: role === "doctor"
+        ? "Registration successful. Your application is pending admin approval."
+        : "Registration successful. Please verify your email.",
     };
   }
 
@@ -97,7 +115,7 @@ export class AuthService {
   // Login user
   static async login(email, password) {
     const user = await User.findOne({ email }).select("+password");
-    
+
     if (!user) {
       throw new Error("Invalid credentials");
     }
@@ -113,12 +131,12 @@ export class AuthService {
     if (!isMatch) {
       // Increment login attempts
       user.loginAttempts += 1;
-      
+
       // Lock account after 5 failed attempts
       if (user.loginAttempts >= 5) {
         user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
       }
-      
+
       await user.save();
       throw new Error("Invalid credentials");
     }
@@ -171,7 +189,7 @@ export class AuthService {
     if (type === "email") {
       const otp = user.setEmailOTP();
       await user.save();
-      
+
       await sendEmail({
         to: user.email,
         subject: "New Email Verification OTP",
@@ -181,7 +199,7 @@ export class AuthService {
     } else if (type === "phone") {
       const otp = user.setPhoneOTP();
       await user.save();
-      
+
       await sendSMS({
         to: user.phone,
         message: `Your new phone verification OTP is: ${otp}`,
@@ -194,29 +212,67 @@ export class AuthService {
   }
 
   // Complete doctor profile
+  // auth.service.js - Add this method
   static async completeDoctorProfile(userId, profileData, files) {
-    let doctor = await Doctor.findOne({ user: userId });
-    
+    const doctor = await Doctor.findOne({ user: userId });
+
     if (!doctor) {
-      doctor = new Doctor({ user: userId });
+      throw new Error("Doctor profile not found");
     }
 
-    // Upload documents if provided
-    const documents = { ...doctor.documents };
-    
+    // Check if doctor is verified
+    if (doctor.verificationStatus !== "verified") {
+      throw new Error("Your account is not verified yet. Please wait for admin approval.");
+    }
+
+    // Update profile with new data
+    const updateData = { ...profileData };
+
+    // Parse JSON fields
+    if (profileData.qualifications) {
+      updateData.qualifications = typeof profileData.qualifications === 'string'
+        ? JSON.parse(profileData.qualifications)
+        : profileData.qualifications;
+    }
+
+    if (profileData.availableDays) {
+      updateData.availableDays = typeof profileData.availableDays === 'string'
+        ? JSON.parse(profileData.availableDays)
+        : profileData.availableDays;
+    }
+
+    if (profileData.consultationTypes) {
+      updateData.consultationTypes = typeof profileData.consultationTypes === 'string'
+        ? JSON.parse(profileData.consultationTypes)
+        : profileData.consultationTypes;
+    }
+
+    if (profileData.bankInfo) {
+      updateData.bankInfo = typeof profileData.bankInfo === 'string'
+        ? JSON.parse(profileData.bankInfo)
+        : profileData.bankInfo;
+    }
+
+    if (profileData.mobileBanking) {
+      updateData.mobileBanking = typeof profileData.mobileBanking === 'string'
+        ? JSON.parse(profileData.mobileBanking)
+        : profileData.mobileBanking;
+    }
+
+    // Handle file uploads
     if (files) {
       for (const [key, fileArray] of Object.entries(files)) {
         if (fileArray && fileArray[0]) {
-          const file = fileArray[0];
           const uploaded = await uploadMedia({
-            buffer: file.buffer,
-            originalFilename: file.originalname,
+            buffer: fileArray[0].buffer,
+            originalFilename: fileArray[0].originalname,
             ownerType: "doctors",
             ownerId: userId,
-            folder: "verification",
+            folder: "doctor_documents",
           });
-          
-          documents[key] = {
+
+          if (!updateData.documents) updateData.documents = {};
+          updateData.documents[key] = {
             url: uploaded.url,
             public_id: uploaded.public_id,
             verified: false,
@@ -225,35 +281,54 @@ export class AuthService {
       }
     }
 
-    // Parse JSON strings
-    const parsedData = {
-      ...profileData,
-      qualifications: JSON.parse(profileData.qualifications || "[]"),
-      currentWorkplace: JSON.parse(profileData.currentWorkplace || "{}"),
-      availableDays: JSON.parse(profileData.availableDays || "[]"),
-      consultationTypes: JSON.parse(profileData.consultationTypes || "[]"),
-      bankInfo: JSON.parse(profileData.bankInfo || "{}"),
-      mobileBanking: JSON.parse(profileData.mobileBanking || "{}"),
-    };
+    // Update completion step
+    updateData.profileCompletionStep = 4; // Complete
+    updateData.isProfileComplete = true;
 
-    // Update doctor profile
-    doctor = await Doctor.findOneAndUpdate(
+    const updatedDoctor = await Doctor.findOneAndUpdate(
       { user: userId },
-      {
-        ...parsedData,
-        documents,
-        verificationStatus: "pending",
-      },
-      { new: true, upsert: true }
+      updateData,
+      { new: true, runValidators: true }
     );
 
-    return doctor;
+    return updatedDoctor;
+  }
+
+  // Get doctor profile with completion status
+  static async getDoctorProfile(userId) {
+    const doctor = await Doctor.findOne({ user: userId }).populate('user', '-password');
+
+    if (!doctor) {
+      throw new Error("Doctor profile not found");
+    }
+
+    // Calculate profile completion percentage
+    const completionSteps = {
+      basicInfo: !!(doctor.bmdcRegNo && doctor.specialization),
+      documents: !!(doctor.documents?.bmdcCertificate?.url && doctor.documents?.profilePhoto?.url),
+      professional: !!(doctor.consultationFee && doctor.availableDays?.length > 0),
+      payment: !!(doctor.bankInfo?.accountNumber || doctor.mobileBanking?.bKash),
+    };
+
+    const completedSteps = Object.values(completionSteps).filter(Boolean).length;
+    const completionPercentage = (completedSteps / 4) * 100;
+
+    return {
+      doctor,
+      profileCompletion: {
+        percentage: completionPercentage,
+        steps: completionSteps,
+        isVerified: doctor.verificationStatus === "verified",
+        isComplete: doctor.isProfileComplete,
+        currentStep: doctor.profileCompletionStep,
+      },
+    };
   }
 
   // Forgot password
   static async forgotPassword(email) {
     const user = await User.findOne({ email });
-    
+
     if (!user) {
       throw new Error("User not found");
     }
@@ -309,7 +384,7 @@ export class AuthService {
   // Change password
   static async changePassword(userId, currentPassword, newPassword) {
     const user = await User.findById(userId).select("+password");
-    
+
     if (!user) {
       throw new Error("User not found");
     }
@@ -394,7 +469,7 @@ export class AuthService {
   // Update admin permissions (superadmin only)
   static async updateAdminPermissions(adminId, permissions, updatedBy) {
     const admin = await User.findById(adminId);
-    
+
     if (!admin || admin.role !== "admin") {
       throw new Error("Admin not found");
     }
@@ -415,13 +490,13 @@ export class AuthService {
   // Get user profile
   static async getProfile(userId) {
     const user = await User.findById(userId).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
-    
+
     if (!user) {
       throw new Error("User not found");
     }
 
     let profile = null;
-    
+
     if (user.role === "doctor") {
       profile = await Doctor.findOne({ user: user._id });
     }
