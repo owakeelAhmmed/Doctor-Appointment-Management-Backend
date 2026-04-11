@@ -75,14 +75,25 @@ export const updateProfileValidation = [
     .isIn(["in-person", "video", "phone"])
     .withMessage("Invalid slot type"),
 
+  // ✅ FIXED: Consultation Types validation - string array support
   body("consultationTypes")
     .optional()
     .isArray()
-    .withMessage("Consultation types must be an array"),
-
-  body("consultationTypes.*")
-    .isIn(["in-person", "video", "phone"])
-    .withMessage("Invalid consultation type"),
+    .withMessage("Consultation types must be an array")
+    .custom((value) => {
+      if (value && value.length > 0) {
+        const validTypes = ["in-person", "video", "phone"];
+        for (const item of value) {
+          if (typeof item !== 'string') {
+            throw new Error("Consultation type must be a string");
+          }
+          if (!validTypes.includes(item)) {
+            throw new Error(`Invalid consultation type: ${item}. Must be one of: ${validTypes.join(", ")}`);
+          }
+        }
+      }
+      return true;
+    }),
 
   body("bankInfo.bankName")
     .optional()

@@ -1479,7 +1479,6 @@ export class AdminService {
       throw new ApiError(400, `Invalid status. Must be one of: ${validStatuses.join(", ")}`);
     }
 
-    // Admin check
     const admin = await User.findById(adminId);
     if (!admin || !["admin", "superadmin"].includes(admin.role)) {
       throw new ApiError(403, "Unauthorized: Only admins can verify doctors");
@@ -1496,25 +1495,26 @@ export class AdminService {
 
     const previousStatus = doctor.verificationStatus;
 
-    // Update
-    doctor.verificationStatus = status;
-    doctor.verifiedBy = adminId;
-    doctor.verifiedAt = new Date();
-    doctor.verificationNotes = notes;
+    const updateFields = {
+      verificationStatus: status,
+      verifiedBy: adminId,
+      verifiedAt: new Date(),
+      verificationNotes: notes,
+      $push: {
+        verificationHistory: {
+          status,
+          notes,
+          updatedBy: adminId,
+          updatedAt: new Date(),
+        },
+      },
+    };
 
     if (status === "rejected") {
-      doctor.rejectionReason = notes;
+      updateFields.rejectionReason = notes;
     }
 
-    // History log
-    doctor.verificationHistory.push({
-      status,
-      notes,
-      updatedBy: adminId,
-      updatedAt: new Date(),
-    });
-
-    await doctor.save();
+    await Doctor.findByIdAndUpdate(doctorId, updateFields, { runValidators: false });
 
     // Email notification
     try {
@@ -1534,7 +1534,7 @@ export class AdminService {
         if (doctor.user.phone) {
           await sendSMS({
             to: doctor.user.phone,
-            message: `Congratulations Dr. ${doctor.user.fullName}! Your account has been verified. Login to start practicing.`,
+            message: `Congratulations Dr. ${doctor.user.fullName}! Your account has been verified.`,
           }).catch((err) => console.error("SMS failed:", err));
         }
       } else if (status === "rejected") {
@@ -1565,8 +1565,6 @@ export class AdminService {
       console.error("Email notification failed:", emailError);
     }
 
-    console.log(`Doctor ${doctor.user.email}: ${previousStatus} → ${status} by ${admin.email}`);
-
     return {
       doctorId: doctor._id,
       userId: doctor.user._id,
@@ -1574,7 +1572,7 @@ export class AdminService {
       fullName: doctor.user.fullName,
       previousStatus,
       currentStatus: status,
-      verifiedAt: doctor.verifiedAt,
+      verifiedAt: new Date(),
       notes,
     };
   }
@@ -1591,10 +1589,10 @@ export class AdminService {
     ];
 
     if (!validDocTypes.includes(documentType)) {
-      throw new ApiError(400, `Invalid document type. Must be one of: ${validDocTypes.join(", ")}`);
+      throw new ApiError(400, `Invalid document type`);
     }
 
-    const doctor = await Doctor.findById(doctorId).populate("user", "fullName email");
+    const doctor = await Doctor.findById(doctorId);
     if (!doctor) {
       throw new ApiError(404, "Doctor not found");
     }
@@ -1603,20 +1601,23 @@ export class AdminService {
       throw new ApiError(404, `Document "${documentType}" not uploaded yet`);
     }
 
-    doctor.documents[documentType].verified = data.verified;
-    doctor.documents[documentType].verifiedAt = new Date();
+    const updateFields = {
+      [`documents.${documentType}.verified`]: data.verified,
+      [`documents.${documentType}.verifiedAt`]: new Date(),
+    };
 
     if (!data.verified && data.rejectionReason) {
-      doctor.documents[documentType].rejectionReason = data.rejectionReason;
+      updateFields[`documents.${documentType}.rejectionReason`] = data.rejectionReason;
     }
 
-    await doctor.save();
+    // ✅ dot notation + runValidators: false
+    await Doctor.findByIdAndUpdate(doctorId, { $set: updateFields }, { runValidators: false });
 
     return {
       documentType,
       verified: data.verified,
-      verifiedAt: doctor.documents[documentType].verifiedAt,
-      rejectionReason: doctor.documents[documentType].rejectionReason,
+      verifiedAt: new Date(),
+      rejectionReason: data.rejectionReason,
     };
   }
 

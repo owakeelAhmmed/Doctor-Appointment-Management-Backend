@@ -134,43 +134,46 @@ export class DoctorService {
   /**
    * Upload documents
    */
-static async uploadDocuments(userId, files) {
-  const doctor = await Doctor.findOne({ user: userId });
-  
-  if (!doctor) {
-    throw new ApiError(404, "Doctor profile not found");
-  }
+  static async uploadDocuments(userId, files) {
+    const doctor = await Doctor.findOne({ user: userId });
+    
+    if (!doctor) {
+      throw new ApiError(404, "Doctor profile not found");
+    }
 
-  const documents = { ...doctor.documents };
-  
-  if (files) {
-    for (const [key, fileArray] of Object.entries(files)) {
-      if (fileArray && fileArray[0]) {
-        const file = fileArray[0];
-        const uploaded = await uploadMedia({
-          buffer: file.buffer,
-          originalFilename: file.originalname,
-          ownerType: "doctors",
-          ownerId: userId,
-          folder: "verification-documents",
-          tags: ["doctor", "verification", key],
-        });
-        
-        documents[key] = {
-          url: uploaded.url,
-          public_id: uploaded.public_id,
-          verified: false,
-          uploadedAt: new Date(),
-        };
+    const updateFields = {};
+    
+    if (files) {
+      for (const [key, fileArray] of Object.entries(files)) {
+        if (fileArray && fileArray[0]) {
+          const file = fileArray[0];
+          const uploaded = await uploadMedia({
+            buffer: file.buffer,
+            originalFilename: file.originalname,
+            ownerType: "doctors",
+            ownerId: userId,
+            folder: "verification-documents",
+            tags: ["doctor", "verification", key],
+          });
+          
+          updateFields[`documents.${key}`] = {
+            url: uploaded.url,
+            public_id: uploaded.public_id,
+            verified: false,
+            uploadedAt: new Date(),
+          };
+        }
       }
     }
+
+    const updatedDoctor = await Doctor.findOneAndUpdate(
+      { user: userId },
+      { $set: updateFields },
+      { new: true, runValidators: false }
+    );
+
+    return updatedDoctor.documents;
   }
-
-  doctor.documents = documents;
-  await doctor.save();
-
-  return documents;
-}
 
   // ==================== Appointment Management ====================
 

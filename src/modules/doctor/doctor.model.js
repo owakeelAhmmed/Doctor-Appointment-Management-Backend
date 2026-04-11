@@ -109,11 +109,11 @@ const doctorSchema = new mongoose.Schema(
       location: String // For in-person consultation
     }],
     
-    consultationTypes: [{
-      type: { type: String, enum: ["in-person", "video", "phone"] },
-      isActive: { type: Boolean, default: true },
-      fee: Number
-    }],
+    consultationTypes: {
+      type: [String],
+      enum: ["in-person", "video", "phone"],
+      default: ["in-person", "video"]
+    },
     
     documents: {
       // BMDC Certificate (Required)
