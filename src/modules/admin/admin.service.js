@@ -1378,5 +1378,282 @@ export class AdminService {
     // Create AuditLog model if needed
     console.log("Audit Log:", logData);
   }
-  
+
+  static async getDoctorsForVerification(filters = {}, pagination = {}) {
+    const { status, search } = filters;
+    const page = parseInt(pagination.page) || 1;
+    const limit = parseInt(pagination.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    // Query build
+    const query = {};
+    if (status && status !== "all") {
+      query.verificationStatus = status;
+    }
+
+    let doctors = await Doctor.find(query)
+      .populate("user", "fullName email phone createdAt profileImage")
+      .populate("verifiedBy", "fullName email")
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: -1 });
+
+    // Name/email search
+    if (search) {
+      doctors = doctors.filter(
+        (d) =>
+          d.user?.fullName?.toLowerCase().includes(search.toLowerCase()) ||
+          d.user?.email?.toLowerCase().includes(search.toLowerCase()) ||
+          d.bmdcRegNo?.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    const total = await Doctor.countDocuments(query);
+
+    const statusCounts = await Doctor.aggregate([
+      { $group: { _id: "$verificationStatus", count: { $sum: 1 } } },
+    ]);
+    const summary = {};
+    statusCounts.forEach((item) => {
+      summary[item._id] = item.count;
+    });
+
+    return {
+      doctors,
+      summary,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * getDoctorForReview - admin review panel এর জন্য full doctor details
+   */
+  static async getDoctorForReview(doctorId) {
+    const doctor = await Doctor.findById(doctorId)
+      .populate("user", "fullName email phone dateOfBirth gender profileImage createdAt address")
+      .populate("verifiedBy", "fullName email");
+
+    if (!doctor) {
+      throw new ApiError(404, "Doctor not found");
+    }
+
+    return { doctor };
+  }
+
+  /**
+ * getVerificationDetails - verification history + current status
+ */
+  static async getVerificationDetails(doctorId) {
+    const doctor = await Doctor.findById(doctorId)
+      .select("verificationStatus verificationHistory verificationNotes rejectionReason verifiedBy verifiedAt bmdcRegNo documents")
+      .populate("verifiedBy", "fullName email")
+      .populate("verificationHistory.updatedBy", "fullName email");
+
+    if (!doctor) {
+      throw new ApiError(404, "Doctor not found");
+    }
+
+    return {
+      verificationStatus: doctor.verificationStatus,
+      verificationNotes: doctor.verificationNotes,
+      rejectionReason: doctor.rejectionReason,
+      verifiedBy: doctor.verifiedBy,
+      verifiedAt: doctor.verifiedAt,
+      bmdcRegNo: doctor.bmdcRegNo,
+      documents: doctor.documents,
+      history: doctor.verificationHistory || [],
+    };
+  }
+
+  /**
+ * verifyDoctor - status change with email notification
+ */
+  static async verifyDoctor(adminId, doctorId, status, notes = "") {
+    const validStatuses = ["verified", "rejected", "suspended", "under_review", "document_verification"];
+    if (!validStatuses.includes(status)) {
+      throw new ApiError(400, `Invalid status. Must be one of: ${validStatuses.join(", ")}`);
+    }
+
+    // Admin check
+    const admin = await User.findById(adminId);
+    if (!admin || !["admin", "superadmin"].includes(admin.role)) {
+      throw new ApiError(403, "Unauthorized: Only admins can verify doctors");
+    }
+
+    const doctor = await Doctor.findById(doctorId).populate("user");
+    if (!doctor) {
+      throw new ApiError(404, "Doctor not found");
+    }
+
+    if (doctor.verificationStatus === "verified" && status === "verified") {
+      throw new ApiError(400, "Doctor is already verified");
+    }
+
+    const previousStatus = doctor.verificationStatus;
+
+    // Update
+    doctor.verificationStatus = status;
+    doctor.verifiedBy = adminId;
+    doctor.verifiedAt = new Date();
+    doctor.verificationNotes = notes;
+
+    if (status === "rejected") {
+      doctor.rejectionReason = notes;
+    }
+
+    // History log
+    doctor.verificationHistory.push({
+      status,
+      notes,
+      updatedBy: adminId,
+      updatedAt: new Date(),
+    });
+
+    await doctor.save();
+
+    // Email notification
+    try {
+      if (status === "verified") {
+        await sendEmail({
+          to: doctor.user.email,
+          subject: "🎉 Your Doctor Account is Verified!",
+          template: "doctor-verified",
+          data: {
+            name: doctor.user.fullName,
+            message: notes || "Your account has been verified. You can now start accepting appointments.",
+            loginUrl: `${process.env.CLIENT_URL}/login`,
+            dashboardUrl: `${process.env.CLIENT_URL}/doctor/dashboard`,
+          },
+        });
+
+        if (doctor.user.phone) {
+          await sendSMS({
+            to: doctor.user.phone,
+            message: `Congratulations Dr. ${doctor.user.fullName}! Your account has been verified. Login to start practicing.`,
+          }).catch((err) => console.error("SMS failed:", err));
+        }
+      } else if (status === "rejected") {
+        await sendEmail({
+          to: doctor.user.email,
+          subject: "Doctor Application Update",
+          template: "doctor-rejected",
+          data: {
+            name: doctor.user.fullName,
+            reason: notes || "Your application did not meet our verification criteria.",
+            supportEmail: process.env.SUPPORT_EMAIL || "support@doccure.com",
+            reapplyUrl: `${process.env.CLIENT_URL}/doctor/complete-profile`,
+          },
+        });
+      } else if (status === "suspended") {
+        await sendEmail({
+          to: doctor.user.email,
+          subject: "Doctor Account Suspended",
+          template: "doctor-suspended",
+          data: {
+            name: doctor.user.fullName,
+            reason: notes || "Violation of terms of service.",
+            supportEmail: process.env.SUPPORT_EMAIL || "support@doccure.com",
+          },
+        });
+      }
+    } catch (emailError) {
+      console.error("Email notification failed:", emailError);
+    }
+
+    console.log(`Doctor ${doctor.user.email}: ${previousStatus} → ${status} by ${admin.email}`);
+
+    return {
+      doctorId: doctor._id,
+      userId: doctor.user._id,
+      email: doctor.user.email,
+      fullName: doctor.user.fullName,
+      previousStatus,
+      currentStatus: status,
+      verifiedAt: doctor.verifiedAt,
+      notes,
+    };
+  }
+
+
+
+  /**
+   * verifyDocument - single document verify/reject
+   */
+  static async verifyDocument(doctorId, documentType, data) {
+    const validDocTypes = [
+      "bmdcCertificate", "nid", "basicDegree",
+      "specializationCertificate", "tradeLicense", "profilePhoto", "chamberPhoto",
+    ];
+
+    if (!validDocTypes.includes(documentType)) {
+      throw new ApiError(400, `Invalid document type. Must be one of: ${validDocTypes.join(", ")}`);
+    }
+
+    const doctor = await Doctor.findById(doctorId).populate("user", "fullName email");
+    if (!doctor) {
+      throw new ApiError(404, "Doctor not found");
+    }
+
+    if (!doctor.documents?.[documentType]?.url) {
+      throw new ApiError(404, `Document "${documentType}" not uploaded yet`);
+    }
+
+    doctor.documents[documentType].verified = data.verified;
+    doctor.documents[documentType].verifiedAt = new Date();
+
+    if (!data.verified && data.rejectionReason) {
+      doctor.documents[documentType].rejectionReason = data.rejectionReason;
+    }
+
+    await doctor.save();
+
+    return {
+      documentType,
+      verified: data.verified,
+      verifiedAt: doctor.documents[documentType].verifiedAt,
+      rejectionReason: doctor.documents[documentType].rejectionReason,
+    };
+  }
+
+
+  /**
+ * getVerificationStats
+ */
+  static async getVerificationStats() {
+    const statusCounts = await Doctor.aggregate([
+      { $group: { _id: "$verificationStatus", count: { $sum: 1 } } },
+    ]);
+
+    const stats = {
+      total: 0,
+      pending: 0,
+      profile_submitted: 0,
+      document_verification: 0,
+      under_review: 0,
+      verified: 0,
+      rejected: 0,
+      suspended: 0,
+    };
+
+    statusCounts.forEach((item) => {
+      if (stats.hasOwnProperty(item._id)) {
+        stats[item._id] = item.count;
+      }
+      stats.total += item.count;
+    });
+
+    stats.actionRequired =
+      (stats.profile_submitted || 0) +
+      (stats.document_verification || 0) +
+      (stats.under_review || 0);
+
+    return stats;
+  }
+
+
 }

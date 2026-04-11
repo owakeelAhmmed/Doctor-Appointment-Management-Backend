@@ -270,7 +270,13 @@ export class AuthService {
     user.lastLogin = new Date();
     await user.save();
 
-    // ========== CRITICAL: CHECK DOCTOR STATUS ==========
+    let verificationStatus = null;
+    let profileCompletionPercentage = 0;
+    let needsProfileCompletion = false;
+    let needsDocumentSubmission = false;
+    let isVerified = false;
+
+    // Handle doctor-specific checks
     if (user.role === "doctor") {
       const doctor = await Doctor.findOne({ user: user._id });
 
@@ -278,38 +284,32 @@ export class AuthService {
         throw new Error("Doctor profile not found");
       }
 
-      // Check verification status
-      if (doctor.verificationStatus !== "verified") {
-        let errorMessage = "";
-        let nextStep = null;
+      verificationStatus = doctor.verificationStatus;
+      profileCompletionPercentage = doctor.profileCompletionPercentage || 0;
 
-        switch (doctor.verificationStatus) {
-          case "pending":
-            errorMessage = "Please complete your profile first. Complete your profile to continue.";
-            nextStep = "complete_profile";
-            break;
-          case "profile_submitted":
-            errorMessage = "Your profile is pending admin review. You will receive an email once verified. This usually takes 24-48 hours.";
-            nextStep = "wait_for_verification";
-            break;
-          case "under_review":
-            errorMessage = "Your profile is currently under review by our admin team. You will be notified once verified.";
-            nextStep = "wait_for_verification";
-            break;
-          case "rejected":
-            errorMessage = `Your application has been rejected. Reason: ${doctor.rejectionReason || doctor.verificationNotes || "Please contact support for more information."}`;
-            nextStep = "contact_support";
-            break;
-          case "suspended":
-            errorMessage = "Your account has been suspended. Please contact support for assistance.";
-            nextStep = "contact_support";
-            break;
-          default:
-            errorMessage = "Your account is not active. Please contact support.";
-        }
-
-        throw new Error(errorMessage);
+      // Check what step the doctor is in
+      switch (verificationStatus) {
+        case "pending":
+          needsProfileCompletion = true;
+          break;
+        case "profile_submitted":
+          needsDocumentSubmission = true;
+          break;
+        case "document_verification":
+        case "bmdc_verification":
+        case "under_review":
+          // Waiting for admin
+          break;
+        case "verified":
+          isVerified = true;
+          break;
+        case "rejected":
+          throw new Error(`REJECTED: ${doctor.rejectionReason || "Your application has been rejected. Please contact support."}`);
+        case "suspended":
+          throw new Error("SUSPENDED: Your account has been suspended. Please contact support.");
       }
+
+      console.log(`✅ Doctor ${user.email} logged in with status: ${verificationStatus}`);
     }
 
     // Generate token
@@ -326,6 +326,11 @@ export class AuthService {
         isEmailVerified: user.isEmailVerified,
         isPhoneVerified: user.isPhoneVerified,
         permissions: user.adminPermissions,
+        verificationStatus,
+        profileCompletionPercentage,
+        needsProfileCompletion,
+        needsDocumentSubmission,
+        isVerified
       },
     };
   }

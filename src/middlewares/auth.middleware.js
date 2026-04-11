@@ -1,8 +1,7 @@
 import jwt from "jsonwebtoken";
 import { User } from "../modules/auth/auth.model.js";
 import { JWT_SECRET } from "../config/env.js";
-// import { User } from "../modules/auth/auth.model.js";
-// import { JWT_SECRET } from "../config/env.js";
+import { Doctor } from "../modules/doctor/doctor.model.js";
 
 export const protect = async (req, res, next) => {
   try {
@@ -125,6 +124,43 @@ export const optionalAuth = async (req, res, next) => {
         // Token invalid, but we don't throw error for optional auth
       }
     }
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const requireDoctorVerified = async (req, res, next) => {
+  try {
+    const doctor = await Doctor.findOne({ user: req.user._id });
+
+    if (!doctor) {
+      return res.status(403).json({
+        success: false,
+        message: "Doctor profile not found"
+      });
+    }
+
+    if (doctor.verificationStatus !== 'verified') {
+      const allowedPaths = [
+        '/doctor/profile',
+        '/doctor/complete-profile',
+        '/doctor/documents',
+        '/doctor/verification-status'
+      ];
+
+      const isAllowedPath = allowedPaths.some(path => req.path.startsWith(path));
+
+      if (!isAllowedPath) {
+        return res.status(403).json({
+          success: false,
+          message: "Your account is pending verification. Please complete your profile and wait for admin approval.",
+          verificationStatus: doctor.verificationStatus
+        });
+      }
+    }
+
+    req.doctor = doctor;
     next();
   } catch (error) {
     next(error);

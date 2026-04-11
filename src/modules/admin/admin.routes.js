@@ -6,7 +6,6 @@ import * as validation from "./admin.validation.js";
 
 const router = Router();
 
-// All admin routes require authentication and admin/superadmin role
 router.use(protect);
 router.use(authorize("admin", "superadmin"));
 
@@ -54,38 +53,61 @@ router.delete(
 );
 
 // ==================== Doctor Verification ====================
+// IMPORTANT: Specific/static routes MUST come before parameterized (:id) routes
 
+// GET /admin/doctors/verification?status=pending&page=1&limit=20
 router.get(
   "/doctors/verification",
+  hasPermission("manage_doctors"),
   validation.doctorFilterValidation,
   validateRequest,
   AdminController.getDoctorsForVerification
 );
 
+// GET /admin/verification/stats - count summary per status
+router.get(
+  "/verification/stats",
+  hasPermission("manage_doctors"),
+  AdminController.getVerificationStats
+);
+
+// GET /admin/doctors/:doctorId/review - full doctor details for admin review panel
+router.get(
+  "/doctors/:doctorId/review",
+  hasPermission("manage_doctors"),
+  AdminController.getDoctorForReview
+);
+
+// GET /admin/doctors/:doctorId/verification - verification details only
 router.get(
   "/doctors/:doctorId/verification",
+  hasPermission("manage_doctors"),
   AdminController.getVerificationDetails
 );
 
+// PUT /admin/doctors/:doctorId/verify
+// body: { status: "verified"|"rejected"|"suspended"|"under_review"|"document_verification", notes: "..." }
 router.put(
   "/doctors/:doctorId/verify",
+  hasPermission("manage_doctors"),
   validation.verifyDoctorValidation,
   validateRequest,
   AdminController.verifyDoctor
 );
 
+// PUT /admin/doctors/:doctorId/documents/:documentType/verify
+// body: { verified: true|false, rejectionReason: "..." }
 router.put(
   "/doctors/:doctorId/documents/:documentType/verify",
+  hasPermission("manage_doctors"),
   validation.verifyDocumentValidation,
   validateRequest,
   AdminController.verifyDocument
 );
 
 // ==================== Appointment Management ====================
-router.get(
-  "/appointments",
-  AdminController.getAllAppointments
-);
+
+router.get("/appointments", AdminController.getAllAppointments);
 
 router.put(
   "/appointments/:appointmentId",
@@ -96,10 +118,7 @@ router.put(
 
 // ==================== Payment Management ====================
 
-router.get(
-  "/payments",
-  AdminController.getAllPayments
-);
+router.get("/payments", AdminController.getAllPayments);
 
 router.put(
   "/payments/:paymentId",
@@ -117,10 +136,7 @@ router.post(
 
 // ==================== Commission Management ====================
 
-router.get(
-  "/commissions/report",
-  AdminController.getCommissionReport
-);
+router.get("/commissions/report", AdminController.getCommissionReport);
 
 router.put(
   "/commissions/doctors/:doctorId",
@@ -137,6 +153,11 @@ router.post(
   AdminController.bulkUpdateCommission
 );
 
+// ==================== Reports ====================
+
+router.get("/reports/doctors/:doctorId", AdminController.getDoctorPerformanceReport);
+router.get("/reports/patients/:patientId", AdminController.getPatientReport);
+
 // ==================== System Settings ====================
 
 router.get("/settings", AdminController.getSettings);
@@ -147,47 +168,6 @@ router.put(
   validation.updateSettingsValidation,
   validateRequest,
   AdminController.updateSettings
-);
-
-// ==================== Reports ====================
-
-router.get(
-  "/reports/doctors/:doctorId",
-  AdminController.getDoctorPerformanceReport
-);
-
-router.get(
-  "/reports/patients/:patientId",
-  AdminController.getPatientReport
-);
-
-// admin.routes.js - Add these routes
-
-// Doctor Verification Routes
-router.get(
-  "/doctors/verification/:status?",
-  authorize("admin", "superadmin"),
-  AdminController.getDoctorsByStatus
-);
-
-router.get(
-  "/doctors/:doctorId/review",
-  authorize("admin", "superadmin"),
-  AdminController.getDoctorForReview
-);
-
-router.put(
-  "/doctors/:doctorId/verify",
-  authorize("admin", "superadmin"),
-  validation.verifyDoctorValidation,
-  validateRequest,
-  AdminController.verifyDoctor
-);
-
-router.get(
-  "/verification/stats",
-  authorize("admin", "superadmin"),
-  AdminController.getVerificationStats
 );
 
 export default router;

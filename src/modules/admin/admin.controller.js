@@ -11,11 +11,7 @@ export class AdminController {
   static async getDashboard(req, res, next) {
     try {
       const result = await AdminService.getDashboard();
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -27,11 +23,7 @@ export class AdminController {
   static async getRevenueAnalytics(req, res, next) {
     try {
       const result = await AdminService.getRevenueAnalytics(req.query);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -45,9 +37,7 @@ export class AdminController {
   static async getUsers(req, res, next) {
     try {
       const { page, limit, ...filters } = req.query;
-
       const result = await AdminService.getUsers(filters, { page, limit });
-
       res.json({
         success: true,
         data: result.users,
@@ -63,14 +53,8 @@ export class AdminController {
    */
   static async getUserDetails(req, res, next) {
     try {
-      const { userId } = req.params;
-
-      const result = await AdminService.getUserDetails(userId);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      const result = await AdminService.getUserDetails(req.params.userId);
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -81,10 +65,7 @@ export class AdminController {
    */
   static async updateUserStatus(req, res, next) {
     try {
-      const { userId } = req.params;
-
-      const result = await AdminService.updateUserStatus(userId, req.body);
-
+      const result = await AdminService.updateUserStatus(req.params.userId, req.body);
       res.json({
         success: true,
         message: `User ${result.isActive ? "activated" : "deactivated"} successfully`,
@@ -100,10 +81,7 @@ export class AdminController {
    */
   static async updateUserRole(req, res, next) {
     try {
-      const { userId } = req.params;
-
-      const result = await AdminService.updateUserRole(userId, req.body);
-
+      const result = await AdminService.updateUserRole(req.params.userId, req.body);
       res.json({
         success: true,
         message: `User role updated from ${result.oldRole} to ${result.newRole}`,
@@ -119,14 +97,8 @@ export class AdminController {
    */
   static async deleteUser(req, res, next) {
     try {
-      const { userId } = req.params;
-
-      const result = await AdminService.deleteUser(userId);
-
-      res.json({
-        success: true,
-        message: result.message,
-      });
+      const result = await AdminService.deleteUser(req.params.userId);
+      res.json({ success: true, message: result.message });
     } catch (error) {
       next(error);
     }
@@ -140,12 +112,13 @@ export class AdminController {
   static async getDoctorsForVerification(req, res, next) {
     try {
       const { page, limit, ...filters } = req.query;
-
       const result = await AdminService.getDoctorsForVerification(filters, { page, limit });
-
       res.json({
         success: true,
-        data: result.doctors,
+        data: {
+          doctors: result.doctors,
+          summary: result.summary, // { pending: 5, profile_submitted: 3, ... }
+        },
         pagination: result.pagination,
       });
     } catch (error) {
@@ -159,18 +132,32 @@ export class AdminController {
   static async verifyDoctor(req, res, next) {
     try {
       const { doctorId } = req.params;
+      const { status, notes } = req.body;
 
-      // Add admin ID to verification data
-      const verificationData = {
-        ...req.body,
-        adminId: req.user._id,
+      // Validate status
+      const validStatuses = ["verified", "rejected", "suspended", "under_review", "document_verification"];
+      if (!validStatuses.includes(status)) {
+        throw new ApiError(400, `Invalid status. Must be one of: ${validStatuses.join(", ")}`);
+      }
+
+      const result = await AdminService.verifyDoctor(
+        req.user._id, // adminId
+        doctorId,
+        status,
+        notes || ""
+      );
+
+      const messages = {
+        verified: "Doctor verified successfully. Doctor can now access all features.",
+        rejected: "Doctor application rejected.",
+        suspended: "Doctor account suspended.",
+        under_review: "Doctor marked as under review.",
+        document_verification: "Doctor marked for document verification.",
       };
-
-      const result = await AdminService.verifyDoctor(doctorId, verificationData);
 
       res.json({
         success: true,
-        message: `Doctor ${result.verificationStatus} successfully`,
+        message: messages[status] || `Doctor status updated to ${status}`,
         data: result,
       });
     } catch (error) {
@@ -184,9 +171,7 @@ export class AdminController {
   static async verifyDocument(req, res, next) {
     try {
       const { doctorId, documentType } = req.params;
-
       const result = await AdminService.verifyDocument(doctorId, documentType, req.body);
-
       res.json({
         success: true,
         message: `Document ${result.verified ? "verified" : "rejected"} successfully`,
@@ -202,14 +187,8 @@ export class AdminController {
    */
   static async getVerificationDetails(req, res, next) {
     try {
-      const { doctorId } = req.params;
-
-      const result = await AdminService.getVerificationDetails(doctorId);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      const result = await AdminService.getVerificationDetails(req.params.doctorId);
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -223,9 +202,7 @@ export class AdminController {
   static async getAllAppointments(req, res, next) {
     try {
       const { page, limit, ...filters } = req.query;
-
       const result = await AdminService.getAllAppointments(filters, { page, limit });
-
       res.json({
         success: true,
         data: result.appointments,
@@ -241,15 +218,8 @@ export class AdminController {
    */
   static async updateAppointment(req, res, next) {
     try {
-      const { appointmentId } = req.params;
-
-      const result = await AdminService.updateAppointment(appointmentId, req.body);
-
-      res.json({
-        success: true,
-        message: "Appointment updated successfully",
-        data: result,
-      });
+      const result = await AdminService.updateAppointment(req.params.appointmentId, req.body);
+      res.json({ success: true, message: "Appointment updated successfully", data: result });
     } catch (error) {
       next(error);
     }
@@ -263,9 +233,7 @@ export class AdminController {
   static async getAllPayments(req, res, next) {
     try {
       const { page, limit, ...filters } = req.query;
-
       const result = await AdminService.getAllPayments(filters, { page, limit });
-
       res.json({
         success: true,
         data: result.payments,
@@ -276,20 +244,14 @@ export class AdminController {
     }
   }
 
+
   /**
    * Update payment
    */
   static async updatePayment(req, res, next) {
     try {
-      const { paymentId } = req.params;
-
-      const result = await AdminService.updatePayment(paymentId, req.body);
-
-      res.json({
-        success: true,
-        message: "Payment updated successfully",
-        data: result,
-      });
+      const result = await AdminService.updatePayment(req.params.paymentId, req.body);
+      res.json({ success: true, message: "Payment updated successfully", data: result });
     } catch (error) {
       next(error);
     }
@@ -300,10 +262,7 @@ export class AdminController {
    */
   static async processWithdrawal(req, res, next) {
     try {
-      const { withdrawalId } = req.params;
-
-      const result = await AdminService.processWithdrawal(withdrawalId, req.body);
-
+      const result = await AdminService.processWithdrawal(req.params.withdrawalId, req.body);
       res.json({
         success: true,
         message: `Withdrawal ${result.status} successfully`,
@@ -321,15 +280,8 @@ export class AdminController {
    */
   static async updateDoctorCommission(req, res, next) {
     try {
-      const { doctorId } = req.params;
-
-      const result = await AdminService.updateDoctorCommission(doctorId, req.body);
-
-      res.json({
-        success: true,
-        message: "Commission rate updated successfully",
-        data: result,
-      });
+      const result = await AdminService.updateDoctorCommission(req.params.doctorId, req.body);
+      res.json({ success: true, message: "Commission rate updated successfully", data: result });
     } catch (error) {
       next(error);
     }
@@ -341,7 +293,6 @@ export class AdminController {
   static async bulkUpdateCommission(req, res, next) {
     try {
       const result = await AdminService.bulkUpdateCommission(req.body);
-
       res.json({
         success: true,
         message: `Updated commission for ${result.modifiedCount} doctors`,
@@ -358,15 +309,12 @@ export class AdminController {
   static async getCommissionReport(req, res, next) {
     try {
       const result = await AdminService.getCommissionReport(req.query);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
   }
+
 
   // ==================== System Settings ====================
 
@@ -376,11 +324,7 @@ export class AdminController {
   static async getSettings(req, res, next) {
     try {
       const result = await AdminService.getSettings();
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -392,12 +336,7 @@ export class AdminController {
   static async updateSettings(req, res, next) {
     try {
       const result = await AdminService.updateSettings(req.body);
-
-      res.json({
-        success: true,
-        message: "Settings updated successfully",
-        data: result,
-      });
+      res.json({ success: true, message: "Settings updated successfully", data: result });
     } catch (error) {
       next(error);
     }
@@ -410,36 +349,26 @@ export class AdminController {
    */
   static async getDoctorPerformanceReport(req, res, next) {
     try {
-      const { doctorId } = req.params;
-
-      const result = await AdminService.getDoctorPerformanceReport(doctorId, req.query);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      const result = await AdminService.getDoctorPerformanceReport(req.params.doctorId, req.query);
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
   }
+
 
   /**
    * Get patient report
    */
   static async getPatientReport(req, res, next) {
     try {
-      const { patientId } = req.params;
-
-      const result = await AdminService.getPatientReport(patientId, req.query);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      const result = await AdminService.getPatientReport(req.params.patientId, req.query);
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
   }
+
 
   // Get doctors by verification status
   static async getDoctorsByStatus(req, res, next) {
@@ -460,13 +389,8 @@ export class AdminController {
   // Get single doctor for review
   static async getDoctorForReview(req, res, next) {
     try {
-      const { doctorId } = req.params;
-      const result = await AdminService.getDoctorForReview(doctorId);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      const result = await AdminService.getDoctorForReview(req.params.doctorId);
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }
@@ -479,15 +403,23 @@ export class AdminController {
       const { status, notes } = req.body;
 
       const result = await AdminService.verifyDoctor(
-        req.user._id,
+        req.user._id, // adminId
         doctorId,
         status,
-        notes
+        notes || ""
       );
+
+      const messages = {
+        verified: "Doctor verified successfully",
+        rejected: "Doctor application rejected",
+        suspended: "Doctor account suspended",
+        under_review: "Doctor marked as under review",
+        document_verification: "Doctor marked for document verification",
+      };
 
       res.json({
         success: true,
-        message: `Doctor ${status === "verified" ? "verified" : "rejected"} successfully`,
+        message: messages[status] || `Doctor status updated to ${status}`,
         data: result,
       });
     } catch (error) {
@@ -498,12 +430,8 @@ export class AdminController {
   // Get verification statistics
   static async getVerificationStats(req, res, next) {
     try {
-      const stats = await AdminService.getVerificationStats();
-
-      res.json({
-        success: true,
-        data: stats,
-      });
+      const result = await AdminService.getVerificationStats();
+      res.json({ success: true, data: result });
     } catch (error) {
       next(error);
     }

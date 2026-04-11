@@ -3,171 +3,121 @@ import { body, param, query } from "express-validator";
 // ==================== User Management ====================
 
 export const updateUserStatusValidation = [
-  param("userId")
-    .isMongoId()
-    .withMessage("Invalid user ID"),
-
   body("isActive")
     .notEmpty()
-    .withMessage("Status is required")
+    .withMessage("isActive is required")
     .isBoolean()
-    .withMessage("Status must be boolean"),
-
-  body("reason")
-    .optional()
-    .isString()
-    .isLength({ max: 200 })
-    .withMessage("Reason cannot exceed 200 characters"),
+    .withMessage("isActive must be true or false"),
 ];
 
 export const updateUserRoleValidation = [
-  param("userId")
-    .isMongoId()
-    .withMessage("Invalid user ID"),
-
   body("role")
     .notEmpty()
     .withMessage("Role is required")
     .isIn(["patient", "doctor", "admin"])
-    .withMessage("Invalid role"),
-
-  body("reason")
-    .optional()
-    .isString(),
+    .withMessage("Invalid role. Cannot set superadmin via API"),
 ];
 
 // ==================== Doctor Verification ====================
 
 export const verifyDoctorValidation = [
-  param("doctorId")
-    .isMongoId()
-    .withMessage("Invalid doctor ID"),
-
   body("status")
     .notEmpty()
     .withMessage("Status is required")
-    .isIn(["verified", "rejected", "suspended"])
-    .withMessage("Invalid status"),
+    .isIn(["verified", "rejected", "suspended", "under_review", "document_verification"])
+    .withMessage("Invalid status. Must be: verified, rejected, suspended, under_review, or document_verification"),
 
   body("notes")
     .optional()
     .isString()
     .isLength({ max: 500 })
-    .withMessage("Notes cannot exceed 500 characters"),
+    .withMessage("Notes must be under 500 characters"),
 
-  body("commissionRate")
-    .optional()
-    .isFloat({ min: 0, max: 100 })
-    .withMessage("Commission rate must be between 0 and 100"),
+  // Rejection এ notes mandatory
+  body("notes").custom((value, { req }) => {
+    if (req.body.status === "rejected" && (!value || !value.trim())) {
+      throw new Error("Rejection reason (notes) is required when rejecting");
+    }
+    return true;
+  }),
 ];
 
 export const verifyDocumentValidation = [
-  param("doctorId")
-    .isMongoId()
-    .withMessage("Invalid doctor ID"),
-
   param("documentType")
-    .isIn(["bmdcCertificate", "nid", "mbbsCertificate", "specializationCertificate", "profilePhoto"])
+    .isIn([
+      "bmdcCertificate", "nid", "basicDegree",
+      "specializationCertificate", "tradeLicense", "profilePhoto", "chamberPhoto",
+    ])
     .withMessage("Invalid document type"),
 
   body("verified")
     .notEmpty()
-    .withMessage("Verification status is required")
+    .withMessage("verified field is required")
     .isBoolean()
-    .withMessage("Verified must be boolean"),
+    .withMessage("verified must be true or false"),
 
-  body("notes")
+  body("rejectionReason")
     .optional()
-    .isString(),
+    .isString()
+    .isLength({ max: 300 })
+    .withMessage("Rejection reason must be under 300 characters"),
 ];
 
 // ==================== Appointment Management ====================
 
 export const updateAppointmentValidation = [
-  param("appointmentId")
-    .isMongoId()
-    .withMessage("Invalid appointment ID"),
-
   body("status")
     .optional()
     .isIn(["pending", "confirmed", "completed", "cancelled", "no-show"])
-    .withMessage("Invalid status"),
-
-  body("notes")
-    .optional()
-    .isString(),
+    .withMessage("Invalid appointment status"),
 ];
 
 // ==================== Payment Management ====================
 
 export const updatePaymentValidation = [
-  param("paymentId")
-    .isMongoId()
-    .withMessage("Invalid payment ID"),
-
   body("status")
     .optional()
     .isIn(["pending", "completed", "failed", "refunded"])
-    .withMessage("Invalid status"),
-
-  body("transactionId")
-    .optional()
-    .isString(),
+    .withMessage("Invalid payment status"),
 ];
 
 export const processWithdrawalValidation = [
-  param("withdrawalId")
-    .isMongoId()
-    .withMessage("Invalid withdrawal ID"),
-
   body("status")
     .notEmpty()
     .withMessage("Status is required")
     .isIn(["approved", "rejected", "processed"])
-    .withMessage("Invalid status"),
+    .withMessage("Invalid withdrawal status"),
 
   body("notes")
     .optional()
-    .isString(),
-
-  body("transactionId")
-    .optional()
-    .isString(),
+    .isString()
+    .isLength({ max: 300 }),
 ];
 
 // ==================== Commission Management ====================
-
 export const updateCommissionValidation = [
-  param("doctorId")
-    .isMongoId()
-    .withMessage("Invalid doctor ID"),
-
   body("commissionRate")
     .notEmpty()
     .withMessage("Commission rate is required")
     .isFloat({ min: 0, max: 100 })
     .withMessage("Commission rate must be between 0 and 100"),
-
-  body("effectiveFrom")
-    .optional()
-    .isDate()
-    .withMessage("Valid date required"),
 ];
 
 export const bulkCommissionUpdateValidation = [
-  body("specialization")
-    .optional()
-    .isString(),
-
   body("commissionRate")
     .notEmpty()
     .withMessage("Commission rate is required")
     .isFloat({ min: 0, max: 100 })
     .withMessage("Commission rate must be between 0 and 100"),
 
-  body("applyToAll")
+  body("applyTo")
     .optional()
-    .isBoolean(),
+    .isIn(["all", "specialization"])
+    .withMessage("applyTo must be 'all' or 'specialization'"),
+
+  body("specialization")
+    .optional()
+    .isString(),
 ];
 
 // ==================== Reports & Analytics ====================
@@ -176,17 +126,17 @@ export const reportDateValidation = [
   query("fromDate")
     .optional()
     .isDate()
-    .withMessage("Valid from date required"),
+    .withMessage("Valid from date required (YYYY-MM-DD)"),
 
   query("toDate")
     .optional()
     .isDate()
-    .withMessage("Valid to date required"),
+    .withMessage("Valid to date required (YYYY-MM-DD)"),
 
   query("groupBy")
     .optional()
     .isIn(["day", "week", "month", "year"])
-    .withMessage("Invalid group by option"),
+    .withMessage("groupBy must be: day, week, month, or year"),
 ];
 
 export const doctorReportValidation = [
@@ -206,40 +156,20 @@ export const doctorReportValidation = [
 // ==================== Settings Management ====================
 
 export const updateSettingsValidation = [
-  body("commission.default")
+  body("defaultCommissionRate")
     .optional()
-    .isFloat({ min: 0, max: 100 }),
+    .isFloat({ min: 0, max: 100 })
+    .withMessage("Commission rate must be between 0 and 100"),
 
-  body("commission.specializations")
+  body("minWithdrawalAmount")
     .optional()
-    .isObject(),
+    .isInt({ min: 0 })
+    .withMessage("Minimum withdrawal must be positive"),
 
-  body("appointment.cancellationPolicy.hours")
+  body("maxWithdrawalAmount")
     .optional()
-    .isInt({ min: 1 }),
-
-  body("appointment.cancellationPolicy.refundPercentage")
-    .optional()
-    .isInt({ min: 0, max: 100 }),
-
-  body("payment.methods")
-    .optional()
-    .isArray(),
-
-  body("payment.methods.*")
-    .isIn(["bKash", "Nagad", "card", "cash"]),
-
-  body("notification.email")
-    .optional()
-    .isBoolean(),
-
-  body("notification.sms")
-    .optional()
-    .isBoolean(),
-
-  body("notification.push")
-    .optional()
-    .isBoolean(),
+    .isInt({ min: 0 })
+    .withMessage("Maximum withdrawal must be positive"),
 ];
 
 // ==================== Filter Validations ====================
@@ -247,22 +177,13 @@ export const updateSettingsValidation = [
 export const userFilterValidation = [
   query("role")
     .optional()
-    .isIn(["patient", "doctor", "admin", "all"])
-    .withMessage("Invalid role"),
-
-  query("status")
-    .optional()
-    .isIn(["active", "inactive", "pending", "all"])
-    .withMessage("Invalid status"),
-
-  query("search")
-    .optional()
-    .isString(),
+    .isIn(["all", "patient", "doctor", "admin", "superadmin"])
+    .withMessage("Invalid role filter"),
 
   query("page")
     .optional()
     .isInt({ min: 1 })
-    .withMessage("Page must be positive integer"),
+    .withMessage("Page must be a positive integer"),
 
   query("limit")
     .optional()
@@ -271,26 +192,27 @@ export const userFilterValidation = [
 ];
 
 export const doctorFilterValidation = [
-  query("verificationStatus")
+  query("status")
     .optional()
-    .isIn(["pending", "under_review", "verified", "rejected", "all"])
-    .withMessage("Invalid verification status"),
+    .isIn([
+      "all", "pending", "profile_submitted", "document_verification",
+      "under_review", "verified", "rejected", "suspended",
+    ])
+    .withMessage("Invalid status filter"),
 
-  query("specialization")
+  query("page")
     .optional()
-    .isString(),
+    .isInt({ min: 1 })
+    .withMessage("Page must be a positive integer"),
+
+  query("limit")
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage("Limit must be between 1 and 100"),
 
   query("search")
     .optional()
-    .isString(),
-
-  query("sortBy")
-    .optional()
-    .isIn(["name", "rating", "patients", "earnings", "date"])
-    .withMessage("Invalid sort field"),
-
-  query("sortOrder")
-    .optional()
-    .isIn(["asc", "desc"])
-    .withMessage("Sort order must be asc or desc"),
+    .isString()
+    .isLength({ max: 100 })
+    .withMessage("Search term too long"),
 ];
