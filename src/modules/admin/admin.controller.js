@@ -430,8 +430,31 @@ export class AdminController {
   // Get verification statistics
   static async getVerificationStats(req, res, next) {
     try {
-      const result = await AdminService.getVerificationStats();
-      res.json({ success: true, data: result });
+      // Get stats from Doctor model
+      const doctorStats = await AdminService.getVerificationStats();
+      
+      // Get stats from User model for admins/patients
+      const userStats = await User.aggregate([
+        { $match: { role: { $in: ["patient", "admin"] } } },
+        { $group: { _id: "$verificationStatus", count: { $sum: 1 } } },
+      ]);
+      
+      const userStatusMap = {};
+      userStats.forEach(stat => {
+        userStatusMap[stat._id] = stat.count;
+      });
+      
+      res.json({
+        success: true,
+        data: {
+          doctors: doctorStats,
+          users: {
+            pending: userStatusMap.pending || 0,
+            verified: userStatusMap.verified || 0,
+            suspended: userStatusMap.suspended || 0,
+          },
+        },
+      });
     } catch (error) {
       next(error);
     }

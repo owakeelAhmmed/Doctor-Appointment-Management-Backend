@@ -75,7 +75,6 @@ export const updateProfileValidation = [
     .isIn(["in-person", "video", "phone"])
     .withMessage("Invalid slot type"),
 
-  // ✅ FIXED: Consultation Types validation - string array support
   body("consultationTypes")
     .optional()
     .isArray()
@@ -120,35 +119,40 @@ export const updateProfileValidation = [
 
 export const scheduleValidation = [
   body("availableDays")
+    .optional()
     .isArray()
-    .withMessage("Available days must be an array")
-    .notEmpty()
-    .withMessage("At least one day required"),
+    .withMessage("Available days must be an array"),
 
   body("availableDays.*.day")
+    .optional()
     .isIn(["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"])
     .withMessage("Invalid day"),
 
   body("availableDays.*.slots")
+    .optional()
     .isArray()
-    .withMessage("Slots must be an array")
-    .notEmpty()
-    .withMessage("At least one slot required"),
+    .withMessage("Slots must be an array"),
 
   body("availableDays.*.slots.*.startTime")
+    .optional()
     .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
-    .withMessage("Invalid start time format"),
+    .withMessage("Invalid start time format (HH:MM)"),
 
+  // ✅ FIXED: Correct index parsing from path
   body("availableDays.*.slots.*.endTime")
+    .optional()
     .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
-    .withMessage("Invalid end time format")
-    .custom((value, { req, location, path }) => {
-      const slotIndex = path.split('[')[1]?.split(']')[0];
-      const dayIndex = path.split('[')[2]?.split(']')[0];
-      
-      if (slotIndex && dayIndex) {
-        const startTime = req.body.availableDays[dayIndex].slots[slotIndex].startTime;
-        if (value <= startTime) {
+    .withMessage("Invalid end time format (HH:MM)")
+    .custom((endTime, { req, path }) => {
+      // path format: "availableDays[0].slots[0].endTime"
+      const match = path.match(/availableDays\[(\d+)\]\.slots\[(\d+)\]/);
+
+      if (match) {
+        const dayIndex = parseInt(match[1]);
+        const slotIndex = parseInt(match[2]);
+        const startTime = req.body?.availableDays?.[dayIndex]?.slots?.[slotIndex]?.startTime;
+
+        if (startTime && endTime && endTime <= startTime) {
           throw new Error("End time must be after start time");
         }
       }
@@ -156,6 +160,7 @@ export const scheduleValidation = [
     }),
 
   body("availableDays.*.slots.*.type")
+    .optional()
     .isIn(["in-person", "video", "phone"])
     .withMessage("Invalid slot type"),
 

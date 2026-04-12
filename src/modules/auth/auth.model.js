@@ -204,4 +204,8 @@ userSchema.methods.verifyOTP = function (type, enteredOTP) {
   return true;
 };
 
+// Index for faster verification queries
+userSchema.index({ verificationStatus: 1, role: 1 });
+userSchema.index({ verifiedBy: 1 });
+
 export const User = mongoose.model("User", userSchema);

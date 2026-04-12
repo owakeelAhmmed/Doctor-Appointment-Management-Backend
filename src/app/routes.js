@@ -22,7 +22,7 @@ router.use("/media", mediaRoutes);
 // later:
 router.use("/auth", authRoutes);
 router.use("/patient", patientRoutes);
-router.use("/doctor", doctorRoutes);
+router.use("/doctors", doctorRoutes);
 router.use("/admin", adminRoutes);
 router.use("/appointments", appointmentRoutes);
 router.use("/prescriptions", prescriptionRoutes);

@@ -27,6 +27,30 @@ export const requireDoctorVerified = async (req, res, next) => {
   }
 };
 
+
+/**
+ * Sync doctor verification status to user model
+ */
+export const syncDoctorVerificationToUser = async (req, res, next) => {
+  try {
+    const doctor = await Doctor.findOne({ user: req.user._id });
+    
+    if (doctor && doctor.verificationStatus !== req.user.verificationStatus) {
+      await User.findByIdAndUpdate(req.user._id, {
+        verificationStatus: doctor.verificationStatus,
+        verifiedBy: doctor.verifiedBy,
+        verifiedAt: doctor.verifiedAt,
+        verificationNotes: doctor.verificationNotes,
+      });
+    }
+    
+    next();
+  } catch (error) {
+    console.error("Sync error:", error);
+    next();
+  }
+};
+
 function getRedirectPath(status) {
   const paths = {
     pending: "/doctor/complete-profile",

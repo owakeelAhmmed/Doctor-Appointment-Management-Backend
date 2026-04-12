@@ -1516,7 +1516,23 @@ export class AdminService {
 
     await Doctor.findByIdAndUpdate(doctorId, updateFields, { runValidators: false });
 
-    // Email notification
+    const userUpdateFields = {
+      verificationStatus: status,
+      verifiedBy: adminId,
+      verifiedAt: new Date(),
+      verificationNotes: notes,
+    };
+
+    if (status === "verified") {
+      userUpdateFields.isActive = true;
+      userUpdateFields.isEmailVerified = true;
+      userUpdateFields.isPhoneVerified = true;
+    } else if (status === "rejected" || status === "suspended") {
+      userUpdateFields.isActive = false;
+    }
+
+    await User.findByIdAndUpdate(doctor.user._id, userUpdateFields, { runValidators: false });
+
     try {
       if (status === "verified") {
         await sendEmail({
@@ -1592,7 +1608,7 @@ export class AdminService {
       throw new ApiError(400, `Invalid document type`);
     }
 
-    const doctor = await Doctor.findById(doctorId);
+    const doctor = await Doctor.findById(doctorId).populate("user");
     if (!doctor) {
       throw new ApiError(404, "Doctor not found");
     }
@@ -1601,6 +1617,7 @@ export class AdminService {
       throw new ApiError(404, `Document "${documentType}" not uploaded yet`);
     }
 
+    // Update document verification status
     const updateFields = {
       [`documents.${documentType}.verified`]: data.verified,
       [`documents.${documentType}.verifiedAt`]: new Date(),
@@ -1610,17 +1627,43 @@ export class AdminService {
       updateFields[`documents.${documentType}.rejectionReason`] = data.rejectionReason;
     }
 
-    // ✅ dot notation + runValidators: false
     await Doctor.findByIdAndUpdate(doctorId, { $set: updateFields }, { runValidators: false });
+
+    // Check if all required documents are verified
+    const updatedDoctor = await Doctor.findById(doctorId);
+    const requiredDocs = ["bmdcCertificate", "nid", "basicDegree", "profilePhoto"];
+    const allRequiredVerified = requiredDocs.every(
+      docType => updatedDoctor.documents?.[docType]?.verified === true
+    );
+
+    // If all documents verified, update status to under_review
+    if (allRequiredVerified && updatedDoctor.verificationStatus === "document_verification") {
+      await Doctor.findByIdAndUpdate(doctorId, {
+        verificationStatus: "under_review",
+        $push: {
+          verificationHistory: {
+            status: "under_review",
+            notes: "All documents verified. Under final review.",
+            updatedBy: doctor.user?._id,
+            updatedAt: new Date(),
+          },
+        },
+      });
+
+      // Update User model status
+      await User.findByIdAndUpdate(doctor.user._id, {
+        verificationStatus: "under_review",
+      });
+    }
 
     return {
       documentType,
       verified: data.verified,
       verifiedAt: new Date(),
       rejectionReason: data.rejectionReason,
+      allRequiredVerified,
     };
   }
-
 
   /**
  * getVerificationStats

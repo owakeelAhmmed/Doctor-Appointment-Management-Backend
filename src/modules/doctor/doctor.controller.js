@@ -1,6 +1,8 @@
 import { Doctor } from "./doctor.model.js";
 import { DoctorService } from "./doctor.service.js";
 import { ApiError } from "../../utils/apiError.js";
+import { Review } from "../review/review.model.js";
+import mongoose from "mongoose";
 
 export class DoctorController {
 
@@ -413,4 +415,193 @@ export class DoctorController {
       next(error);
     }
   }
+
+  // public endpoint
+static async getPublicDoctors(req, res, next) {
+  try {
+    const { page = 1, limit = 12, search, specialization, city, sortBy } = req.query;
+    const skip = (page - 1) * limit;
+
+    let query = { verificationStatus: "verified" };
+
+    // Search by name
+    if (search) {
+      const users = await User.find({
+        fullName: { $regex: search, $options: "i" },
+        role: "doctor"
+      }).select("_id");
+      query.user = { $in: users.map(u => u._id) };
+    }
+
+    // Filter by specialization
+    if (specialization) {
+      query.specialization = specialization;
+    }
+
+    // Filter by city
+    if (city) {
+      query["currentWorkplace.city"] = { $regex: city, $options: "i" };
+    }
+
+    // Sorting
+    let sortOptions = {};
+    switch (sortBy) {
+      case "rating": sortOptions = { rating: -1 }; break;
+      case "experience": sortOptions = { experienceYears: -1 }; break;
+      case "fee_low": sortOptions = { consultationFee: 1 }; break;
+      case "fee_high": sortOptions = { consultationFee: -1 }; break;
+      default: sortOptions = { rating: -1 };
+    }
+
+    const doctors = await Doctor.find(query)
+      .populate("user", "fullName email phone profileImage")
+      .skip(skip)
+      .limit(parseInt(limit))
+      .sort(sortOptions);
+
+    const total = await Doctor.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: {
+        doctors,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / limit)
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Get filters for verified doctors only
+static async getPublicFilters(req, res, next) {
+  try {
+    const doctors = await Doctor.find({ verificationStatus: "verified" });
+    
+    const specializations = [...new Set(doctors.map(d => d.specialization).filter(Boolean))];
+    const cities = [...new Set(doctors.map(d => d.currentWorkplace?.city).filter(Boolean))];
+    
+    res.json({
+      success: true,
+      data: { specializations, cities }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+  static async getPublicDoctorById(req, res, next) {
+    try {
+      const doctor = await Doctor.findOne({ 
+        _id: req.params.id,
+        verificationStatus: "verified"
+      }).populate("user", "fullName email phone profileImage bio");
+
+      if (!doctor) {
+        throw new ApiError(404, "Doctor not found");
+      }
+
+      // Get reviews for this doctor
+      const reviews = await Review.find({ doctor: doctor._id })
+        .populate({
+          path: "patient",
+          populate: { path: "user", select: "fullName profileImage" }
+        })
+        .limit(10);
+
+      res.json({
+        success: true,
+        data: {
+          ...doctor.toObject(),
+          reviews
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getPublicDoctorSlots(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { date } = req.query;
+
+    if (!date) {
+      throw new ApiError(400, "Date is required");
+    }
+
+    // Find verified doctor
+    const doctor = await Doctor.findOne({ 
+      _id: id,
+      verificationStatus: "verified" 
+    });
+
+    if (!doctor) {
+      throw new ApiError(404, "Doctor not found");
+    }
+
+    // Get day of week from date
+    const selectedDate = new Date(date);
+    const dayName = selectedDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    
+    // Find schedule for that day
+    const daySchedule = doctor.availableDays?.find(d => d.day === dayName);
+    
+    if (!daySchedule || !daySchedule.isAvailable || !daySchedule.slots?.length) {
+      return res.json({
+        success: true,
+        data: {
+          slots: [],
+          message: "No available slots for this date"
+        }
+      });
+    }
+
+    // Get booked appointments for this doctor on this date
+    const Appointment = mongoose.model("Appointment");
+    const bookedAppointments = await Appointment.find({
+      doctor: doctor._id,
+      appointmentDate: {
+        $gte: new Date(date),
+        $lt: new Date(new Date(date).setDate(new Date(date).getDate() + 1))
+      },
+      status: { $in: ["confirmed", "pending"] }
+    });
+
+    // Get booked times
+    const bookedTimes = bookedAppointments.map(apt => apt.startTime);
+
+    // Filter available slots (not booked)
+    const availableSlots = daySchedule.slots
+      .filter(slot => !bookedTimes.includes(slot.startTime))
+      .map(slot => ({
+        time: slot.startTime,
+        endTime: slot.endTime,
+        type: slot.type,
+        maxPatients: slot.maxPatients,
+        available: true
+      }));
+
+    res.json({
+      success: true,
+      data: {
+        doctorId: doctor._id,
+        doctorName: doctor.user?.fullName,
+        date: date,
+        dayName: dayName,
+        slots: availableSlots,
+        consultationFee: doctor.consultationFee,
+        consultationTypes: doctor.consultationTypes
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 }

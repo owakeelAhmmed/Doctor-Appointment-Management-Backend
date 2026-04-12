@@ -4,16 +4,31 @@ import { protect, authorize } from "../../middlewares/auth.middleware.js";
 import { validateRequest } from "../../middlewares/validate.middleware.js";
 import * as validation from "./doctor.validation.js";
 import uploadMemory from "../../middlewares/uploadMemory.js";
-import { requireDoctorVerified } from "./doctor.middleware .js";
+import { requireDoctorVerified, syncDoctorVerificationToUser } from "./doctor.middleware .js";
 
 const router = Router();
 
-// All doctor routes require authentication and doctor role
+// ==================== PUBLIC ROUTES (No Auth Required) ====================
+
+// Get all verified doctors
+router.get("/public", DoctorController.getPublicDoctors);
+
+// Get filters for verified doctors
+router.get("/public/filters", DoctorController.getPublicFilters);
+
+// Get single doctor details (only if verified)
+router.get("/public/:id", DoctorController.getPublicDoctorById);
+
+router.get("/public/:id/slots", DoctorController.getPublicDoctorSlots);
+
+// ==================== PROTECTED ROUTES (Auth Required) ====================
+
 router.use(protect);
 router.use(authorize("doctor"));
 
-// ==================== PUBLIC DOCTOR ROUTES ====================
+router.use(syncDoctorVerificationToUser);
 
+// Profile Routes
 router.get("/profile", DoctorController.getProfile);
 router.put("/profile", validation.updateProfileValidation, validateRequest, DoctorController.updateProfile);
 
@@ -33,9 +48,7 @@ router.post(
 );
 
 router.get("/verification-status", DoctorController.getVerificationStatus);
-
 router.get("/dashboard", DoctorController.getDashboard);
-
 router.get("/complete-profile", DoctorController.getCompleteProfile);
 router.post("/complete-profile", DoctorController.submitCompleteProfile);
 
@@ -45,7 +58,6 @@ router.put("/bank-info", validation.updateBankInfoValidation, validateRequest, D
 router.put("/mobile-banking", validation.updateMobileBankingValidation, validateRequest, DoctorController.updateMobileBanking);
 
 // ==================== VERIFIED DOCTOR ONLY ROUTES ====================
-
 // Apply verification check middleware for all routes below
 router.use(requireDoctorVerified);
 
