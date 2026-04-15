@@ -379,4 +379,112 @@ export class PaymentController {
     
     return rows.join("\n");
   }
+
+   // ==================== SSLCommerz Payment Methods ====================
+
+  /**
+   * Initiate SSLCommerz payment
+   */
+  static async initiateSSLCommerzPayment(req, res, next) {
+    try {
+      const patient = await Patient.findOne({ user: req.user._id });
+      if (!patient) {
+        throw new ApiError(404, "Patient profile not found");
+      }
+
+      const result = await PaymentService.initiateSSLCommerzPayment(
+        patient._id,
+        req.body
+      );
+
+      res.json({
+        success: true,
+        message: "Payment initiated successfully",
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * SSLCommerz success callback
+   */
+  static async sslCommerzSuccess(req, res, next) {
+    try {
+      const { tran_id, amount, bank_tran_id, status } = req.body;
+
+      console.log("SSLCommerz Success Callback:", { tran_id, amount, bank_tran_id, status });
+
+      if (status === "VALID") {
+        await PaymentService.handleSSLCommerzSuccess(tran_id, parseFloat(amount), bank_tran_id);
+        
+        // Redirect to frontend success page
+        return res.redirect(`${process.env.CLIENT_URL}/payment/success?transactionId=${tran_id}`);
+      } else {
+        return res.redirect(`${process.env.CLIENT_URL}/payment/failed?transactionId=${tran_id}`);
+      }
+    } catch (error) {
+      console.error("SSLCommerz success error:", error);
+      res.redirect(`${process.env.CLIENT_URL}/payment/failed`);
+    }
+  }
+
+  /**
+   * SSLCommerz fail callback
+   */
+  static async sslCommerzFail(req, res, next) {
+    try {
+      const { tran_id, error_reason } = req.body;
+
+      console.log("SSLCommerz Fail Callback:", { tran_id, error_reason });
+
+      await PaymentService.handleSSLCommerzFail(tran_id, error_reason);
+      
+      res.redirect(`${process.env.CLIENT_URL}/payment/failed?transactionId=${tran_id}&reason=${error_reason}`);
+    } catch (error) {
+      console.error("SSLCommerz fail error:", error);
+      res.redirect(`${process.env.CLIENT_URL}/payment/failed`);
+    }
+  }
+
+  /**
+   * SSLCommerz cancel callback
+   */
+  static async sslCommerzCancel(req, res, next) {
+    try {
+      const { tran_id } = req.body;
+
+      console.log("SSLCommerz Cancel Callback:", { tran_id });
+
+      await PaymentService.handleSSLCommerzCancel(tran_id);
+      
+      res.redirect(`${process.env.CLIENT_URL}/payment/cancel?transactionId=${tran_id}`);
+    } catch (error) {
+      console.error("SSLCommerz cancel error:", error);
+      res.redirect(`${process.env.CLIENT_URL}/payment/cancel`);
+    }
+  }
+
+  /**
+   * SSLCommerz IPN (Instant Payment Notification)
+   */
+  static async sslCommerzIPN(req, res, next) {
+    try {
+      const { tran_id, amount, bank_tran_id, status } = req.body;
+
+      console.log("SSLCommerz IPN:", { tran_id, amount, bank_tran_id, status });
+
+      if (status === "VALID") {
+        await PaymentService.handleSSLCommerzSuccess(tran_id, parseFloat(amount), bank_tran_id);
+      } else if (status === "FAILED") {
+        await PaymentService.handleSSLCommerzFail(tran_id, "IPN reported failure");
+      }
+
+      res.status(200).send("OK");
+    } catch (error) {
+      console.error("SSLCommerz IPN error:", error);
+      res.status(500).send("Error");
+    }
+  }
 }

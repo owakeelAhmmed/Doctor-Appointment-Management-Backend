@@ -121,4 +121,21 @@ router.post(
   PaymentController.markAsFailed
 );
 
+// ==================== SSLCommerz Routes ====================
+
+// Patient initiates payment
+router.post(
+  "/sslcommerz/initiate",
+  authorize("patient"),
+  validation.initiatePaymentValidation,
+  validateRequest,
+  PaymentController.initiateSSLCommerzPayment
+);
+
+// SSLCommerz callbacks (public routes, no auth needed)
+router.post("/sslcommerz/success", PaymentController.sslCommerzSuccess);
+router.post("/sslcommerz/fail", PaymentController.sslCommerzFail);
+router.post("/sslcommerz/cancel", PaymentController.sslCommerzCancel);
+router.post("/sslcommerz/ipn", PaymentController.sslCommerzIPN);
+
 export default router;

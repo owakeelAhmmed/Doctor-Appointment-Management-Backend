@@ -206,3 +206,171 @@ export function generateTransactionReport(transactions, period) {
     transactions: transactions.slice(0, 50), // Last 50
   };
 }
+
+// ==================== SSLCommerz Configuration ====================
+
+const SSLCOMMERZ_CONFIG = {
+  sandbox: {
+    baseURL: "https://sandbox.sslcommerz.com",
+    storeId: process.env.SSLCOMMERZ_SANDBOX_STORE_ID,
+    storePassword: process.env.SSLCOMMERZ_SANDBOX_STORE_PASSWORD,
+  },
+  live: {
+    baseURL: "https://secure.sslcommerz.com",
+    storeId: process.env.SSLCOMMERZ_LIVE_STORE_ID,
+    storePassword: process.env.SSLCOMMERZ_LIVE_STORE_PASSWORD,
+  },
+};
+
+const isProduction = process.env.NODE_ENV === "production";
+const sslcommerzConfig = isProduction ? SSLCOMMERZ_CONFIG.live : SSLCOMMERZ_CONFIG.sandbox;
+
+/**
+ * Create SSLCommerz payment session
+ */
+export async function createSSLCommerzPayment(orderData) {
+  try {
+    const {
+      amount,
+      transactionId,
+      customerName,
+      customerEmail,
+      customerPhone,
+      customerAddress,
+      productName = "Doctor Appointment",
+      successUrl,
+      failUrl,
+      cancelUrl,
+      ipnUrl,
+    } = orderData;
+
+    const postData = {
+      store_id: sslcommerzConfig.storeId,
+      store_passwd: sslcommerzConfig.storePassword,
+      total_amount: amount,
+      currency: "BDT",
+      tran_id: transactionId,
+      success_url: successUrl || `${process.env.API_URL || 'http://localhost:5001'}/api/v1/payments/sslcommerz/success`,
+      fail_url: failUrl || `${process.env.API_URL || 'http://localhost:5001'}/api/v1/payments/sslcommerz/fail`,
+      cancel_url: cancelUrl || `${process.env.API_URL || 'http://localhost:5001'}/api/v1/payments/sslcommerz/cancel`,
+      ipn_url: ipnUrl || `${process.env.API_URL || 'http://localhost:5001'}/api/v1/webhooks/sslcommerz`,
+      cus_name: customerName,
+      cus_email: customerEmail,
+      cus_phone: customerPhone,
+      cus_add1: customerAddress || "Dhaka",
+      cus_city: "Dhaka",
+      cus_country: "Bangladesh",
+      shipping_method: "NO",
+      product_name: productName,
+      product_category: "Healthcare",
+      product_profile: "general",
+    };
+
+    console.log("SSLCommerz Request:", postData);
+
+    const response = await axios({
+      method: "POST",
+      url: `${sslcommerzConfig.baseURL}/gwprocess/v4/api.php`,
+      data: new URLSearchParams(postData),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    });
+
+    console.log("SSLCommerz Response:", response.data);
+
+    if (response.data.status === "SUCCESS") {
+      return {
+        success: true,
+        redirectURL: response.data.GatewayPageURL,
+        sessionKey: response.data.sessionkey,
+      };
+    } else {
+      return {
+        success: false,
+        message: response.data.failedreason || "Payment initiation failed",
+        error: response.data,
+      };
+    }
+  } catch (error) {
+    console.error("SSLCommerz payment error:", error.response?.data || error.message);
+    return {
+      success: false,
+      message: error.response?.data?.failedreason || "Payment gateway error",
+    };
+  }
+}
+
+/**
+ * Validate SSLCommerz payment
+ */
+export async function validateSSLCommerzPayment(transactionId, amount) {
+  try {
+    const validationUrl = `${sslcommerzConfig.baseURL}/validator/api/validationserverAPI.php`;
+    
+    const response = await axios.get(validationUrl, {
+      params: {
+        store_id: sslcommerzConfig.storeId,
+        store_passwd: sslcommerzConfig.storePassword,
+        tran_id: transactionId,
+        format: "json",
+      },
+    });
+
+    console.log("SSLCommerz Validation Response:", response.data);
+
+    if (response.data.status === "VALID" || response.data.status === "VALIDATED") {
+      const responseAmount = parseFloat(response.data.amount);
+      if (responseAmount !== amount) {
+        return {
+          success: false,
+          message: "Amount mismatch",
+          data: response.data,
+        };
+      }
+
+      return {
+        success: true,
+        message: "Payment validated successfully",
+        data: {
+          transactionId: response.data.tran_id,
+          amount: response.data.amount,
+          bankTransactionId: response.data.bank_tran_id,
+          cardType: response.data.card_type,
+          cardNumber: response.data.card_no,
+          paymentDate: response.data.tran_date,
+        },
+      };
+    } else {
+      return {
+        success: false,
+        message: response.data.error_reason || "Invalid transaction",
+        data: response.data,
+      };
+    }
+  } catch (error) {
+    console.error("SSLCommerz validation error:", error.message);
+    return {
+      success: false,
+      message: "Validation failed",
+    };
+  }
+}
+
+// Make sure to export these at the bottom of file
+// export default {
+//   verifyBKashTransaction,
+//   verifyNagadTransaction,
+//   processCardPayment,
+//   generatePaymentQRCode,
+//   calculateCommission,
+//   formatPaymentMethod,
+//   getPaymentStatusBadge,
+//   validateBKashNumber,
+//   validateNagadNumber,
+//   maskCardNumber,
+//   calculateRefund,
+//   generateTransactionReport,
+//   createSSLCommerzPayment,
+//   validateSSLCommerzPayment,
+// };

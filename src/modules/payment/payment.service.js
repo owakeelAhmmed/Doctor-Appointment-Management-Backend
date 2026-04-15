@@ -1069,4 +1069,204 @@ export class PaymentService {
       }`,
     });
   }
+
+  // ==================== SSLCommerz Payment Methods ====================
+
+  /**
+   * Initiate SSLCommerz payment
+   */
+  static async initiateSSLCommerzPayment(patientId, paymentData) {
+    const { appointmentId, paymentMethod = "card" } = paymentData;
+
+    // Get appointment and validate
+    const appointment = await Appointment.findOne({
+      _id: appointmentId,
+      patient: patientId,
+    }).populate("doctor");
+
+    if (!appointment) {
+      throw new ApiError(404, "Appointment not found");
+    }
+
+    // Check if appointment is already paid
+    const existingPayment = await Payment.findOne({ 
+      appointment: appointmentId,
+      status: "completed" 
+    });
+    
+    if (existingPayment) {
+      throw new ApiError(400, "Payment already completed for this appointment");
+    }
+
+    // Calculate fees
+    const platformFee = Math.round(appointment.fee * (appointment.doctor.commissionRate / 100));
+    const doctorAmount = appointment.fee - platformFee;
+    const transactionId = this.generateTransactionId();
+
+    // Get patient user info
+    const patient = await Patient.findById(patientId).populate("user");
+
+    // Create or update payment record
+    let payment = await Payment.findOne({ appointment: appointmentId });
+
+    if (payment) {
+      payment.transactionId = transactionId;
+      payment.amount = appointment.fee;
+      payment.platformFee = platformFee;
+      payment.doctorAmount = doctorAmount;
+      payment.paymentMethod = paymentMethod;
+      payment.status = "pending";
+    } else {
+      payment = await Payment.create({
+        appointment: appointmentId,
+        patient: patientId,
+        doctor: appointment.doctor._id,
+        amount: appointment.fee,
+        platformFee,
+        doctorAmount,
+        paymentMethod,
+        status: "pending",
+        transactionId,
+      });
+    }
+
+    // Create SSLCommerz payment session
+    const { createSSLCommerzPayment } = await import("./payment.utils.js");
+    
+    const sslResult = await createSSLCommerzPayment({
+      amount: appointment.fee,
+      transactionId,
+      customerName: patient.user.fullName,
+      customerEmail: patient.user.email,
+      customerPhone: patient.user.phone,
+      customerAddress: patient.user.address?.street || "Dhaka",
+      productName: `Appointment with Dr. ${appointment.doctor.user?.fullName || 'Doctor'}`,
+    });
+
+    if (!sslResult.success) {
+      payment.status = "failed";
+      await payment.save();
+      throw new ApiError(400, sslResult.message);
+    }
+
+    // Store session key in payment details
+    payment.paymentDetails = {
+      ...payment.paymentDetails,
+      sslSessionKey: sslResult.sessionKey,
+      initiatedAt: new Date(),
+    };
+    await payment.save();
+
+    return {
+      payment,
+      redirectURL: sslResult.redirectURL,
+    };
+  }
+
+  /**
+   * Handle SSLCommerz success callback
+   */
+  static async handleSSLCommerzSuccess(transactionId, amount, bankTransactionId) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Find payment by transaction ID
+      const payment = await Payment.findOne({ transactionId }).session(session);
+      
+      if (!payment) {
+        throw new ApiError(404, "Payment not found");
+      }
+
+      if (payment.status === "completed") {
+        return payment;
+      }
+
+      // Validate payment with SSLCommerz
+      const { validateSSLCommerzPayment } = await import("./payment.utils.js");
+      const validation = await validateSSLCommerzPayment(transactionId, amount);
+
+      if (!validation.success) {
+        payment.status = "failed";
+        payment.paymentDetails = {
+          ...payment.paymentDetails,
+          failureReason: validation.message,
+          failedAt: new Date(),
+        };
+        await payment.save({ session });
+        throw new ApiError(400, validation.message);
+      }
+
+      // Update payment
+      payment.status = "completed";
+      payment.paymentDate = new Date();
+      payment.transactionId = validation.data.transactionId;
+      payment.paymentDetails = {
+        ...payment.paymentDetails,
+        bankTransactionId: validation.data.bankTransactionId,
+        cardType: validation.data.cardType,
+        cardNumber: validation.data.cardNumber,
+        paymentDate: validation.data.paymentDate,
+        validatedAt: new Date(),
+      };
+      await payment.save({ session });
+
+      // Confirm appointment
+      await this.confirmAppointmentAfterPayment(payment.appointment, payment._id, session);
+
+      await session.commitTransaction();
+
+      // Send notifications
+      await this.sendPaymentConfirmation(payment);
+
+      return payment;
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  /**
+   * Handle SSLCommerz failure callback
+   */
+  static async handleSSLCommerzFail(transactionId, reason) {
+    const payment = await Payment.findOne({ transactionId });
+    
+    if (!payment) {
+      throw new ApiError(404, "Payment not found");
+    }
+
+    payment.status = "failed";
+    payment.paymentDetails = {
+      ...payment.paymentDetails,
+      failureReason: reason || "Payment failed",
+      failedAt: new Date(),
+    };
+    await payment.save();
+
+    return payment;
+  }
+
+  /**
+   * Handle SSLCommerz cancellation
+   */
+  static async handleSSLCommerzCancel(transactionId) {
+    const payment = await Payment.findOne({ transactionId });
+    
+    if (!payment) {
+      throw new ApiError(404, "Payment not found");
+    }
+
+    payment.status = "cancelled";
+    payment.paymentDetails = {
+      ...payment.paymentDetails,
+      cancelledAt: new Date(),
+      cancellationReason: "User cancelled payment",
+    };
+    await payment.save();
+
+    return payment;
+  }
 }

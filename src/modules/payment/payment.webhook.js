@@ -1,3 +1,4 @@
+import { Payment } from "./payment.model.js";
 import { PaymentService } from "./payment.service.js";
 
 /**
