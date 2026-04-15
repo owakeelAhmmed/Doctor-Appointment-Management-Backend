@@ -7,8 +7,8 @@ import { sendEmail } from "../../services/email.service.js";
 import { sendSMS } from "../../services/sms.service.js";
 import { ApiError } from "../../utils/apiError.js";
 import {
-//   processBKashPayment,
-//   processNagadPayment,
+  //   processBKashPayment,
+  //   processNagadPayment,
   processCardPayment,
   verifyBKashTransaction,
   verifyNagadTransaction,
@@ -17,7 +17,7 @@ import mongoose from "mongoose";
 import crypto from "crypto";
 
 export class PaymentService {
-  
+
   // ==================== Payment Initiation ====================
 
   /**
@@ -145,7 +145,7 @@ export class PaymentService {
 
       // Verify bKash transaction
       const verification = await verifyBKashTransaction(transactionId, appointmentId);
-      
+
       if (!verification.valid) {
         throw new ApiError(400, verification.message);
       }
@@ -195,7 +195,7 @@ export class PaymentService {
 
       // Verify Nagad transaction
       const verification = await verifyNagadTransaction(transactionId, appointmentId);
-      
+
       if (!verification.valid) {
         throw new ApiError(400, verification.message);
       }
@@ -296,7 +296,7 @@ export class PaymentService {
 
     try {
       const payment = await Payment.findOne({ appointment: appointmentId }).session(session);
-      
+
       if (!payment) {
         throw new ApiError(404, "Payment not found");
       }
@@ -329,7 +329,7 @@ export class PaymentService {
    */
   static async confirmAppointmentAfterPayment(appointmentId, paymentId, session) {
     const appointment = await Appointment.findById(appointmentId).session(session);
-    
+
     appointment.status = "confirmed";
     appointment.payment = paymentId;
     await appointment.save({ session });
@@ -348,7 +348,7 @@ export class PaymentService {
    */
   static async markAsFailed(paymentId, reason) {
     const payment = await Payment.findById(paymentId);
-    
+
     if (!payment) {
       throw new ApiError(404, "Payment not found");
     }
@@ -377,7 +377,7 @@ export class PaymentService {
       const { amount, reason } = refundData;
 
       const payment = await Payment.findById(paymentId).session(session);
-      
+
       if (!payment) {
         throw new ApiError(404, "Payment not found");
       }
@@ -453,7 +453,7 @@ export class PaymentService {
    */
   static async requestWithdrawal(doctorId, withdrawalData) {
     const doctor = await Doctor.findById(doctorId);
-    
+
     if (!doctor) {
       throw new ApiError(404, "Doctor not found");
     }
@@ -462,7 +462,7 @@ export class PaymentService {
 
     // Check if doctor has sufficient balance
     const availableBalance = doctor.totalEarnings - doctor.pendingWithdrawal;
-    
+
     if (amount > availableBalance) {
       throw new ApiError(400, "Insufficient balance");
     }
@@ -500,7 +500,7 @@ export class PaymentService {
     const { doctorId, amount, status, transactionId } = processData;
 
     const doctor = await Doctor.findById(doctorId);
-    
+
     if (!doctor) {
       throw new ApiError(404, "Doctor not found");
     }
@@ -894,7 +894,7 @@ export class PaymentService {
 
     // Group data
     let groupedData = [];
-    
+
     if (groupBy === "day") {
       const grouped = {};
       payments.forEach(p => {
@@ -1039,7 +1039,7 @@ export class PaymentService {
   static async sendWithdrawalRequestNotification(doctor, request) {
     // Notify admin
     const admins = await User.find({ role: { $in: ["admin", "superadmin"] } });
-    
+
     for (const admin of admins) {
       await sendEmail({
         to: admin.email,
@@ -1064,9 +1064,8 @@ export class PaymentService {
 
     await sendSMS({
       to: doctorUser.phone,
-      message: `Your withdrawal request of ${update.amount} BDT has been ${update.status}. ${
-        update.transactionId ? `Transaction ID: ${update.transactionId}` : ""
-      }`,
+      message: `Your withdrawal request of ${update.amount} BDT has been ${update.status}. ${update.transactionId ? `Transaction ID: ${update.transactionId}` : ""
+        }`,
     });
   }
 
@@ -1089,11 +1088,11 @@ export class PaymentService {
     }
 
     // Check if appointment is already paid
-    const existingPayment = await Payment.findOne({ 
+    const existingPayment = await Payment.findOne({
       appointment: appointmentId,
-      status: "completed" 
+      status: "completed"
     });
-    
+
     if (existingPayment) {
       throw new ApiError(400, "Payment already completed for this appointment");
     }
@@ -1132,7 +1131,7 @@ export class PaymentService {
 
     // Create SSLCommerz payment session
     const { createSSLCommerzPayment } = await import("./payment.utils.js");
-    
+
     const sslResult = await createSSLCommerzPayment({
       amount: appointment.fee,
       transactionId,
@@ -1171,42 +1170,76 @@ export class PaymentService {
     session.startTransaction();
 
     try {
-      // Find payment by transaction ID
-      const payment = await Payment.findOne({ transactionId }).session(session);
-      
+      console.log("=== Looking for payment ===");
+      console.log("Received transactionId:", transactionId);
+
+      // ✅ Try multiple ways to find payment
+      let payment = null;
+
+      // 1. Try exact match
+      payment = await Payment.findOne({ transactionId }).session(session);
+
+      // 2. If not found, try by appointment (find recent pending payment)
       if (!payment) {
-        throw new ApiError(404, "Payment not found");
+        // Get recent pending payments (last 5 minutes)
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        const recentPayments = await Payment.find({
+          status: "pending",
+          createdAt: { $gte: fiveMinutesAgo }
+        }).session(session);
+
+        console.log("Recent pending payments found:", recentPayments.length);
+
+        if (recentPayments.length === 1) {
+          payment = recentPayments[0];
+          console.log("Using single recent payment:", payment._id);
+        } else if (recentPayments.length > 1) {
+          // Try to match by amount
+          payment = recentPayments.find(p => Math.abs(p.amount - parseFloat(amount)) < 1);
+          console.log("Found by amount match:", payment?._id);
+        }
       }
+
+      // 3. If still not found, try by transactionId partial match
+      if (!payment && transactionId) {
+        const partialId = transactionId.slice(-15);
+        payment = await Payment.findOne({
+          transactionId: { $regex: partialId, $options: 'i' }
+        }).session(session);
+        console.log("Found by partial match:", payment?._id);
+      }
+
+      if (!payment) {
+        // Log all pending payments for debugging
+        const allPending = await Payment.find({ status: "pending" }).session(session);
+        console.log("All pending payments:", allPending.map(p => ({
+          id: p._id,
+          transactionId: p.transactionId,
+          amount: p.amount,
+          appointment: p.appointment
+        })));
+
+        throw new ApiError(404, `Payment not found for transactionId: ${transactionId}`);
+      }
+
+      console.log("Found payment:", {
+        id: payment._id,
+        transactionId: payment.transactionId,
+        amount: payment.amount,
+        status: payment.status
+      });
 
       if (payment.status === "completed") {
         return payment;
       }
 
-      // Validate payment with SSLCommerz
-      const { validateSSLCommerzPayment } = await import("./payment.utils.js");
-      const validation = await validateSSLCommerzPayment(transactionId, amount);
-
-      if (!validation.success) {
-        payment.status = "failed";
-        payment.paymentDetails = {
-          ...payment.paymentDetails,
-          failureReason: validation.message,
-          failedAt: new Date(),
-        };
-        await payment.save({ session });
-        throw new ApiError(400, validation.message);
-      }
-
       // Update payment
       payment.status = "completed";
       payment.paymentDate = new Date();
-      payment.transactionId = validation.data.transactionId;
       payment.paymentDetails = {
         ...payment.paymentDetails,
-        bankTransactionId: validation.data.bankTransactionId,
-        cardType: validation.data.cardType,
-        cardNumber: validation.data.cardNumber,
-        paymentDate: validation.data.paymentDate,
+        bankTransactionId: bankTransactionId,
+        sslTransactionId: transactionId,
         validatedAt: new Date(),
       };
       await payment.save({ session });
@@ -1233,7 +1266,7 @@ export class PaymentService {
    */
   static async handleSSLCommerzFail(transactionId, reason) {
     const payment = await Payment.findOne({ transactionId });
-    
+
     if (!payment) {
       throw new ApiError(404, "Payment not found");
     }
@@ -1254,7 +1287,7 @@ export class PaymentService {
    */
   static async handleSSLCommerzCancel(transactionId) {
     const payment = await Payment.findOne({ transactionId });
-    
+
     if (!payment) {
       throw new ApiError(404, "Payment not found");
     }

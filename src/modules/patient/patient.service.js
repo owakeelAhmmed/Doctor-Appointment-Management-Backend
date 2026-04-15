@@ -9,7 +9,7 @@ import { sendSMS } from "../../services/sms.service.js";
 import { ApiError } from "../../utils/apiError.js";
 
 export class PatientService {
-  
+
   // ==================== Profile Management ====================
 
   /**
@@ -17,7 +17,7 @@ export class PatientService {
    */
   static async getProfile(userId) {
     const user = await User.findById(userId).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
-    
+
     if (!user) {
       throw new ApiError(404, "User not found");
     }
@@ -39,29 +39,64 @@ export class PatientService {
    * Update patient profile
    */
   static async updateProfile(userId, updateData) {
+    // Separate user and patient updates
+    const userUpdateData = {};
+    const patientUpdateData = {};
+
+    // User fields
+    if (updateData.fullName) userUpdateData.fullName = updateData.fullName;
+    if (updateData.address) userUpdateData.address = updateData.address;
+    if (updateData.profileImage) userUpdateData.profileImage = updateData.profileImage;
+
+    // Patient fields
+    if (updateData.bloodGroup !== undefined) patientUpdateData.bloodGroup = updateData.bloodGroup;
+    if (updateData.allergies !== undefined) patientUpdateData.allergies = updateData.allergies;
+    if (updateData.chronicDiseases !== undefined) patientUpdateData.chronicDiseases = updateData.chronicDiseases;
+    if (updateData.emergencyContact !== undefined) patientUpdateData.emergencyContact = updateData.emergencyContact;
+    if (updateData.preferences !== undefined) patientUpdateData.preferences = updateData.preferences;
+
+    // Update user
     const user = await User.findByIdAndUpdate(
       userId,
-      {
-        fullName: updateData.fullName,
-        address: updateData.address,
-        profileImage: updateData.profileImage,
-      },
+      userUpdateData,
       { new: true, runValidators: true }
     ).select("-password -emailOTP -phoneOTP -resetPasswordToken -resetPasswordExpire");
 
+    // Update patient
     const patient = await Patient.findOneAndUpdate(
       { user: userId },
-      {
-        bloodGroup: updateData.bloodGroup,
-        allergies: updateData.allergies,
-        chronicDiseases: updateData.chronicDiseases,
-        emergencyContact: updateData.emergencyContact,
-        preferences: updateData.preferences,
-      },
+      patientUpdateData,
       { new: true, upsert: true, runValidators: true }
     );
 
     return { user, patient };
+  }
+
+  // patient.service.js - Add this method
+
+  static async updateProfileImage(userId, file) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new ApiError(404, "User not found");
+    }
+
+    const uploaded = await uploadMedia({
+      buffer: file.buffer,
+      originalFilename: file.originalname,
+      ownerType: "users",
+      ownerId: userId,
+      folder: "profile-images",
+    });
+
+    user.profileImage = {
+      url: uploaded.url,
+      public_id: uploaded.public_id,
+    };
+
+    await user.save();
+
+    return user.profileImage;
   }
 
   /**
@@ -69,7 +104,7 @@ export class PatientService {
    */
   static async addMedicalHistory(userId, historyData) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -85,7 +120,7 @@ export class PatientService {
    */
   static async addMedication(userId, medicationData) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -162,7 +197,7 @@ export class PatientService {
         fullName: { $regex: name, $options: "i" },
         role: "doctor",
       }).select("_id");
-      
+
       query.user = { $in: users.map(u => u._id) };
     }
 
@@ -190,9 +225,9 @@ export class PatientService {
    * Get doctor details by ID
    */
   static async getDoctorDetails(doctorId) {
-    const doctor = await Doctor.findOne({ 
-      _id: doctorId, 
-      verificationStatus: "verified" 
+    const doctor = await Doctor.findOne({
+      _id: doctorId,
+      verificationStatus: "verified"
     }).populate("user", "fullName email phone profileImage address");
 
     if (!doctor) {
@@ -233,7 +268,7 @@ export class PatientService {
    */
   static async getDoctorAvailableSlots(doctorId) {
     const doctor = await Doctor.findById(doctorId);
-    
+
     if (!doctor) {
       throw new ApiError(404, "Doctor not found");
     }
@@ -245,11 +280,11 @@ export class PatientService {
     for (let i = 0; i < 7; i++) {
       const date = new Date(today);
       date.setDate(today.getDate() + i);
-      
+
       const dayName = date.toLocaleDateString("en-US", { weekday: "lowercase" });
-      
+
       const daySchedule = doctor.availableDays.find(d => d.day === dayName);
-      
+
       if (daySchedule && daySchedule.isAvailable) {
         // Get booked appointments for this date
         const bookedAppointments = await Appointment.find({
@@ -264,7 +299,7 @@ export class PatientService {
         const bookedTimes = bookedAppointments.map(a => a.startTime);
 
         // Filter available slots
-        const availableSlots = daySchedule.slots.filter(slot => 
+        const availableSlots = daySchedule.slots.filter(slot =>
           !bookedTimes.includes(slot.startTime)
         );
 
@@ -290,9 +325,9 @@ export class PatientService {
     const { doctorId, appointmentDate, startTime, symptoms, type } = bookingData;
 
     // Check if doctor exists and is verified
-    const doctor = await Doctor.findOne({ 
-      _id: doctorId, 
-      verificationStatus: "verified" 
+    const doctor = await Doctor.findOne({
+      _id: doctorId,
+      verificationStatus: "verified"
     });
 
     if (!doctor) {
@@ -405,7 +440,7 @@ export class PatientService {
    */
   static async getMyAppointments(userId, filters) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -460,7 +495,7 @@ export class PatientService {
    */
   static async getAppointmentDetails(userId, appointmentId) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -491,7 +526,7 @@ export class PatientService {
    */
   static async cancelAppointment(userId, appointmentId) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -563,7 +598,7 @@ export class PatientService {
    */
   static async rescheduleAppointment(userId, appointmentId, newDate, newTime) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -584,7 +619,7 @@ export class PatientService {
     // Check if new slot is available
     const dayName = new Date(newDate).toLocaleDateString("en-US", { weekday: "lowercase" });
     const doctor = await Doctor.findById(appointment.doctor);
-    
+
     const daySchedule = doctor.availableDays.find(d => d.day === dayName);
     if (!daySchedule || !daySchedule.isAvailable) {
       throw new ApiError(400, "Doctor not available on this day");
@@ -644,7 +679,7 @@ export class PatientService {
    */
   static async addReview(userId, appointmentId, reviewData) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -681,7 +716,7 @@ export class PatientService {
     const doctor = await Doctor.findById(appointment.doctor);
     const newTotal = doctor.totalReviews + 1;
     const newRating = ((doctor.rating * doctor.totalReviews) + reviewData.rating) / newTotal;
-    
+
     doctor.rating = newRating;
     doctor.totalReviews = newTotal;
     await doctor.save();
@@ -694,7 +729,7 @@ export class PatientService {
    */
   static async getMyReviews(userId) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -719,7 +754,7 @@ export class PatientService {
    */
   static async addFavoriteDoctor(userId, doctorId) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -744,7 +779,7 @@ export class PatientService {
    */
   static async removeFavoriteDoctor(userId, doctorId) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -778,7 +813,7 @@ export class PatientService {
 
   static async getDashboard(userId) {
     const patient = await Patient.findOne({ user: userId });
-    
+
     if (!patient) {
       throw new ApiError(404, "Patient profile not found");
     }
@@ -821,13 +856,13 @@ export class PatientService {
 
     // Stats
     const totalAppointments = await Appointment.countDocuments({ patient: patient._id });
-    const completedAppointments = await Appointment.countDocuments({ 
-      patient: patient._id, 
-      status: "completed" 
+    const completedAppointments = await Appointment.countDocuments({
+      patient: patient._id,
+      status: "completed"
     });
-    const cancelledAppointments = await Appointment.countDocuments({ 
-      patient: patient._id, 
-      status: "cancelled" 
+    const cancelledAppointments = await Appointment.countDocuments({
+      patient: patient._id,
+      status: "cancelled"
     });
 
     // Recent prescriptions

@@ -4,7 +4,7 @@ import { Doctor } from "../doctor/doctor.model.js";
 import { ApiError } from "../../utils/apiError.js";
 
 export class PaymentController {
-  
+
   // ==================== Payment Initiation ====================
 
   /**
@@ -18,7 +18,7 @@ export class PaymentController {
       }
 
       const result = await PaymentService.initiatePayment(patient._id, req.body);
-      
+
       res.status(201).json({
         success: true,
         message: "Payment initiated successfully",
@@ -43,7 +43,7 @@ export class PaymentController {
       }
 
       const result = await PaymentService.processBKashPayment(patient._id, req.body);
-      
+
       res.json({
         success: true,
         message: "Payment completed successfully",
@@ -65,7 +65,7 @@ export class PaymentController {
       }
 
       const result = await PaymentService.processNagadPayment(patient._id, req.body);
-      
+
       res.json({
         success: true,
         message: "Payment completed successfully",
@@ -82,12 +82,12 @@ export class PaymentController {
   static async processCardPayment(req, res, next) {
     try {
       const { paymentId } = req.params;
-      
+
       const result = await PaymentService.processCardPayment({
         paymentId,
         ...req.body,
       });
-      
+
       res.json({
         success: true,
         message: "Payment completed successfully",
@@ -104,12 +104,12 @@ export class PaymentController {
   static async processCashPayment(req, res, next) {
     try {
       const { appointmentId } = req.params;
-      
+
       const result = await PaymentService.processCashPayment(
         appointmentId,
         req.user._id
       );
-      
+
       res.json({
         success: true,
         message: "Cash payment verified successfully",
@@ -127,9 +127,9 @@ export class PaymentController {
     try {
       const { paymentId } = req.params;
       const { reason } = req.body;
-      
+
       const result = await PaymentService.markAsFailed(paymentId, reason);
-      
+
       res.json({
         success: true,
         message: "Payment marked as failed",
@@ -148,13 +148,13 @@ export class PaymentController {
   static async processRefund(req, res, next) {
     try {
       const { paymentId } = req.params;
-      
+
       const result = await PaymentService.processRefund(
         paymentId,
         req.body,
         req.user._id
       );
-      
+
       res.json({
         success: true,
         message: "Refund processed successfully",
@@ -178,7 +178,7 @@ export class PaymentController {
       }
 
       const result = await PaymentService.requestWithdrawal(doctor._id, req.body);
-      
+
       res.status(201).json({
         success: true,
         message: "Withdrawal request submitted successfully",
@@ -195,9 +195,9 @@ export class PaymentController {
   static async processWithdrawal(req, res, next) {
     try {
       const { withdrawalId } = req.params;
-      
+
       const result = await PaymentService.processWithdrawal(withdrawalId, req.body);
-      
+
       res.json({
         success: true,
         message: `Withdrawal ${result.status} successfully`,
@@ -216,13 +216,13 @@ export class PaymentController {
   static async getPaymentById(req, res, next) {
     try {
       const { paymentId } = req.params;
-      
+
       const result = await PaymentService.getPaymentById(
         paymentId,
         req.user._id,
         req.user.role
       );
-      
+
       res.json({
         success: true,
         data: result,
@@ -242,7 +242,7 @@ export class PaymentController {
         req.user.role,
         req.query
       );
-      
+
       res.json({
         success: true,
         data: result.payments,
@@ -260,13 +260,13 @@ export class PaymentController {
   static async getPaymentByAppointment(req, res, next) {
     try {
       const { appointmentId } = req.params;
-      
+
       const result = await PaymentService.getPaymentByAppointment(
         appointmentId,
         req.user._id,
         req.user.role
       );
-      
+
       res.json({
         success: true,
         data: result,
@@ -282,7 +282,7 @@ export class PaymentController {
   static async getAllPayments(req, res, next) {
     try {
       const result = await PaymentService.getAllPayments(req.query);
-      
+
       res.json({
         success: true,
         data: result.payments,
@@ -302,7 +302,7 @@ export class PaymentController {
   static async getStatistics(req, res, next) {
     try {
       const result = await PaymentService.getStatistics(req.query);
-      
+
       res.json({
         success: true,
         data: result,
@@ -318,7 +318,7 @@ export class PaymentController {
   static async generateReport(req, res, next) {
     try {
       const result = await PaymentService.generateReport(req.query);
-      
+
       // Handle different formats
       if (req.query.format === "csv") {
         // Convert to CSV and send
@@ -327,13 +327,13 @@ export class PaymentController {
         res.setHeader("Content-Disposition", "attachment; filename=payment-report.csv");
         return res.send(csv);
       }
-      
+
       if (req.query.format === "pdf") {
         // Generate PDF and send
         // This would use a PDF generation library
         res.json({ success: true, message: "PDF generation coming soon" });
       }
-      
+
       res.json({
         success: true,
         data: result,
@@ -348,7 +348,7 @@ export class PaymentController {
    */
   static convertToCSV(report) {
     const rows = [];
-    
+
     // Headers
     rows.push([
       "Date",
@@ -361,7 +361,7 @@ export class PaymentController {
       "Method",
       "Status",
     ].join(","));
-    
+
     // Data rows
     report.payments.forEach(p => {
       rows.push([
@@ -376,11 +376,11 @@ export class PaymentController {
         p.status,
       ].join(","));
     });
-    
+
     return rows.join("\n");
   }
 
-   // ==================== SSLCommerz Payment Methods ====================
+  // ==================== SSLCommerz Payment Methods ====================
 
   /**
    * Initiate SSLCommerz payment
@@ -412,16 +412,31 @@ export class PaymentController {
    */
   static async sslCommerzSuccess(req, res, next) {
     try {
-      const { tran_id, amount, bank_tran_id, status } = req.body;
+      const { tran_id, amount, bank_tran_id, status, val_id } = req.body;
 
-      console.log("SSLCommerz Success Callback:", { tran_id, amount, bank_tran_id, status });
+      console.log("=== SSLCommerz Success Callback ===");
+      console.log("Full body:", JSON.stringify(req.body, null, 2));
+      console.log("tran_id:", tran_id);
+      console.log("val_id:", val_id);
+      console.log("amount:", amount);
+      console.log("bank_tran_id:", bank_tran_id);
+      console.log("status:", status);
 
       if (status === "VALID") {
-        await PaymentService.handleSSLCommerzSuccess(tran_id, parseFloat(amount), bank_tran_id);
-        
-        // Redirect to frontend success page
+        // ✅ Try with val_id first, then tran_id
+        const searchId = val_id || tran_id;
+        console.log("Searching with ID:", searchId);
+
+        await PaymentService.handleSSLCommerzSuccess(
+          searchId,
+          parseFloat(amount),
+          bank_tran_id
+        );
+
+        console.log("Payment processed successfully, redirecting to success page");
         return res.redirect(`${process.env.CLIENT_URL}/payment/success?transactionId=${tran_id}`);
       } else {
+        console.log("Payment status not VALID, redirecting to failed page");
         return res.redirect(`${process.env.CLIENT_URL}/payment/failed?transactionId=${tran_id}`);
       }
     } catch (error) {
@@ -440,7 +455,7 @@ export class PaymentController {
       console.log("SSLCommerz Fail Callback:", { tran_id, error_reason });
 
       await PaymentService.handleSSLCommerzFail(tran_id, error_reason);
-      
+
       res.redirect(`${process.env.CLIENT_URL}/payment/failed?transactionId=${tran_id}&reason=${error_reason}`);
     } catch (error) {
       console.error("SSLCommerz fail error:", error);
@@ -458,7 +473,7 @@ export class PaymentController {
       console.log("SSLCommerz Cancel Callback:", { tran_id });
 
       await PaymentService.handleSSLCommerzCancel(tran_id);
-      
+
       res.redirect(`${process.env.CLIENT_URL}/payment/cancel?transactionId=${tran_id}`);
     } catch (error) {
       console.error("SSLCommerz cancel error:", error);

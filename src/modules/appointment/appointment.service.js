@@ -10,7 +10,7 @@ import { ApiError } from "../../utils/apiError.js";
 import crypto from "crypto";
 
 export class AppointmentService {
-  
+
   // ==================== Booking & Management ====================
 
   /**
@@ -26,9 +26,9 @@ export class AppointmentService {
     }
 
     // Check if doctor exists and is verified
-    const doctor = await Doctor.findOne({ 
-      _id: doctorId, 
-      verificationStatus: "verified" 
+    const doctor = await Doctor.findOne({
+      _id: doctorId,
+      verificationStatus: "verified"
     }).populate("user");
 
     if (!doctor) {
@@ -105,9 +105,14 @@ export class AppointmentService {
    */
   static async validateSlotAvailability(doctorId, date, time) {
     const doctor = await Doctor.findById(doctorId);
-    
+
+    if (!doctor) {
+      throw new ApiError(404, "Doctor not found");
+    }
+
+    const dayName = new Date(date).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+
     // Check doctor's available days
-    const dayName = new Date(date).toLocaleDateString("en-US", { weekday: "lowercase" });
     const daySchedule = doctor.availableDays.find(d => d.day === dayName);
 
     if (!daySchedule || !daySchedule.isAvailable) {
@@ -143,7 +148,7 @@ export class AppointmentService {
     const endMinutes = minutes + 30;
     const endHours = hours + Math.floor(endMinutes / 60);
     const endMinutesFormatted = endMinutes % 60;
-    
+
     return `${endHours.toString().padStart(2, "0")}:${endMinutesFormatted.toString().padStart(2, "0")}`;
   }
 
@@ -155,9 +160,9 @@ export class AppointmentService {
     // For now, generate a simple unique link
     const uniqueId = crypto.randomBytes(16).toString("hex");
     const meetingLink = `https://meet.doctorsystem.com/${appointmentId}-${uniqueId}`;
-    
+
     await Appointment.findByIdAndUpdate(appointmentId, { meetingLink });
-    
+
     return meetingLink;
   }
 
@@ -223,7 +228,7 @@ export class AppointmentService {
     await appointment.save();
 
     // Update payment status
-    await Payment.findByIdAndUpdate(paymentId, { 
+    await Payment.findByIdAndUpdate(paymentId, {
       status: "completed",
       paymentDate: new Date(),
     });
@@ -260,9 +265,8 @@ export class AppointmentService {
       to: patientUser.phone,
       message: `Your appointment with Dr. ${doctorUser.fullName} on ${new Date(
         appointment.appointmentDate
-      ).toLocaleDateString("bn-BD")} at ${appointment.startTime} is confirmed. ${
-        appointment.meetingLink ? `Join: ${appointment.meetingLink}` : ""
-      }`,
+      ).toLocaleDateString("bn-BD")} at ${appointment.startTime} is confirmed. ${appointment.meetingLink ? `Join: ${appointment.meetingLink}` : ""
+        }`,
     });
 
     // Email to doctor
@@ -315,7 +319,7 @@ export class AppointmentService {
     // Handle special cases
     if (status === "completed") {
       appointment.completedAt = new Date();
-      
+
       // Update doctor stats
       await Doctor.findByIdAndUpdate(doctorId, {
         $inc: { totalPatients: 1 },
@@ -356,9 +360,8 @@ export class AppointmentService {
 
     await sendSMS({
       to: patientUser.phone,
-      message: `Your appointment with Dr. ${appointment.doctor.user.fullName} on ${
-        new Date(appointment.appointmentDate).toLocaleDateString("bn-BD")
-      } at ${appointment.startTime} ${statusMessages[status]}.`,
+      message: `Your appointment with Dr. ${appointment.doctor.user.fullName} on ${new Date(appointment.appointmentDate).toLocaleDateString("bn-BD")
+        } at ${appointment.startTime} ${statusMessages[status]}.`,
     });
   }
 
@@ -414,7 +417,7 @@ export class AppointmentService {
     return {
       appointment,
       refundAmount,
-      message: refundAmount > 0 
+      message: refundAmount > 0
         ? `Appointment cancelled. ${refundAmount} BDT will be refunded.`
         : "Appointment cancelled. No refund applicable.",
     };
@@ -460,9 +463,8 @@ export class AppointmentService {
       to: patientUser.phone,
       message: `Your appointment on ${new Date(
         appointment.appointmentDate
-      ).toLocaleDateString("bn-BD")} at ${appointment.startTime} has been cancelled. ${
-        refundAmount > 0 ? `Refund: ${refundAmount} BDT` : ""
-      }`,
+      ).toLocaleDateString("bn-BD")} at ${appointment.startTime} has been cancelled. ${refundAmount > 0 ? `Refund: ${refundAmount} BDT` : ""
+        }`,
     });
 
     // Notify doctor
@@ -470,9 +472,8 @@ export class AppointmentService {
       to: doctorUser.phone,
       message: `Appointment on ${new Date(
         appointment.appointmentDate
-      ).toLocaleDateString("bn-BD")} at ${appointment.startTime} has been cancelled by patient. ${
-        reason ? `Reason: ${reason}` : ""
-      }`,
+      ).toLocaleDateString("bn-BD")} at ${appointment.startTime} has been cancelled by patient. ${reason ? `Reason: ${reason}` : ""
+        }`,
     });
   }
 
@@ -540,9 +541,8 @@ export class AppointmentService {
     // Notify doctor
     await sendSMS({
       to: doctorUser.phone,
-      message: `Appointment rescheduled: ${oldDateStr} ${oldTime} → ${newDateStr} ${appointment.startTime}. ${
-        reason ? `Reason: ${reason}` : ""
-      }`,
+      message: `Appointment rescheduled: ${oldDateStr} ${oldTime} → ${newDateStr} ${appointment.startTime}. ${reason ? `Reason: ${reason}` : ""
+        }`,
     });
   }
 
@@ -557,29 +557,30 @@ export class AppointmentService {
 
     let query = {};
 
+    console.log('=== getAppointments Debug ===');
+    console.log('userId:', userId);
+    console.log('role:', role);
+
     if (role === "patient") {
       const patient = await Patient.findOne({ user: userId });
-      if (!patient) throw new ApiError(404, "Patient not found");
+      console.log('Found patient:', patient?._id);
+
+      if (!patient) {
+        console.log('Patient not found for user:', userId);
+        throw new ApiError(404, "Patient not found");
+      }
       query.patient = patient._id;
     } else if (role === "doctor") {
       const doctor = await Doctor.findOne({ user: userId });
-      if (!doctor) throw new ApiError(404, "Doctor not found");
+      console.log('Found doctor:', doctor?._id);
+
+      if (!doctor) {
+        throw new ApiError(404, "Doctor not found");
+      }
       query.doctor = doctor._id;
     }
 
-    if (status && status !== "all") {
-      query.status = status;
-    }
-
-    if (type && type !== "all") {
-      query.type = type;
-    }
-
-    if (fromDate || toDate) {
-      query.appointmentDate = {};
-      if (fromDate) query.appointmentDate.$gte = new Date(fromDate);
-      if (toDate) query.appointmentDate.$lte = new Date(toDate);
-    }
+    console.log('Final query:', JSON.stringify(query));
 
     const appointments = await Appointment.find(query)
       .populate({
@@ -602,17 +603,10 @@ export class AppointmentService {
       .limit(limit)
       .sort({ appointmentDate: -1, startTime: -1 });
 
-    const total = await Appointment.countDocuments(query);
+    console.log('Appointments found in DB:', appointments.length);
 
-    // Get upcoming appointments count
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const upcoming = await Appointment.countDocuments({
-      ...query,
-      appointmentDate: { $gte: today },
-      status: { $in: ["confirmed", "pending"] },
-    });
+    const total = await Appointment.countDocuments(query);
+    console.log('Total appointments count:', total);
 
     return {
       appointments,
@@ -621,7 +615,6 @@ export class AppointmentService {
         limit,
         total,
         pages: Math.ceil(total / limit),
-        upcoming,
       },
     };
   }
@@ -806,7 +799,7 @@ export class AppointmentService {
 
     // Send notification to patient
     const patientUser = await User.findById(appointment.patient.user);
-    
+
     await sendSMS({
       to: patientUser.phone,
       message: `Your prescription for appointment on ${new Date(
@@ -876,10 +869,10 @@ export class AppointmentService {
   static async getStatistics(role, id) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const startOfWeek = new Date(today);
     startOfWeek.setDate(today.getDate() - today.getDay());
-    
+
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const startOfYear = new Date(today.getFullYear(), 0, 1);
 

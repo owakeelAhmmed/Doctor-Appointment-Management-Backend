@@ -6,11 +6,19 @@ import * as validation from "./payment.validation.js";
 
 const router = Router();
 
-// All payment routes require authentication
+// ==================== SSLCommerz Callbacks (NO AUTH - Must be FIRST) ====================
+// ✅ These routes MUST come before router.use(protect)
+
+router.post("/sslcommerz/success", PaymentController.sslCommerzSuccess);
+router.post("/sslcommerz/fail", PaymentController.sslCommerzFail);
+router.post("/sslcommerz/cancel", PaymentController.sslCommerzCancel);
+router.post("/sslcommerz/ipn", PaymentController.sslCommerzIPN);
+
+// ==================== AUTH MIDDLEWARE ====================
+// All routes below this line require authentication
 router.use(protect);
 
 // ==================== Public Payment Routes (All authenticated users) ====================
-
 router.get(
   "/my",
   validation.getPaymentsValidation,
@@ -19,11 +27,9 @@ router.get(
 );
 
 router.get("/:paymentId", PaymentController.getPaymentById);
-
 router.get("/appointment/:appointmentId", PaymentController.getPaymentByAppointment);
 
 // ==================== Patient Routes ====================
-
 router.post(
   "/initiate",
   authorize("patient"),
@@ -56,8 +62,16 @@ router.post(
   PaymentController.processCardPayment
 );
 
-// ==================== Doctor Routes ====================
+// ==================== SSLCommerz Initiate (Requires Auth) ====================
+router.post(
+  "/sslcommerz/initiate",
+  authorize("patient"),
+  validation.initiatePaymentValidation,
+  validateRequest,
+  PaymentController.initiateSSLCommerzPayment
+);
 
+// ==================== Doctor Routes ====================
 router.post(
   "/withdrawals/request",
   authorize("doctor"),
@@ -67,7 +81,6 @@ router.post(
 );
 
 // ==================== Admin Routes ====================
-
 router.get(
   "/admin/all",
   authorize("admin", "superadmin"),
@@ -114,28 +127,10 @@ router.post(
   PaymentController.processCashPayment
 );
 
-
 router.post(
   "/admin/:paymentId/failed",
   authorize("admin", "superadmin"),
   PaymentController.markAsFailed
 );
-
-// ==================== SSLCommerz Routes ====================
-
-// Patient initiates payment
-router.post(
-  "/sslcommerz/initiate",
-  authorize("patient"),
-  validation.initiatePaymentValidation,
-  validateRequest,
-  PaymentController.initiateSSLCommerzPayment
-);
-
-// SSLCommerz callbacks (public routes, no auth needed)
-router.post("/sslcommerz/success", PaymentController.sslCommerzSuccess);
-router.post("/sslcommerz/fail", PaymentController.sslCommerzFail);
-router.post("/sslcommerz/cancel", PaymentController.sslCommerzCancel);
-router.post("/sslcommerz/ipn", PaymentController.sslCommerzIPN);
 
 export default router;
