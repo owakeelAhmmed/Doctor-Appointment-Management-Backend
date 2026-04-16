@@ -129,18 +129,11 @@ export class AppointmentController {
    */
   static async getMyAppointments(req, res, next) {
     try {
-      console.log('User ID:', req.user._id);
-      console.log('User Role:', req.user.role);
-      console.log('Query params:', req.query);
-
       const result = await AppointmentService.getAppointments(
         req.user._id,
         req.user.role,
         req.query
       );
-
-      console.log('Appointments found:', result.appointments.length);
-      console.log('First appointment:', result.appointments[0]);
 
       res.json({
         success: true,
@@ -148,7 +141,6 @@ export class AppointmentController {
         pagination: result.pagination,
       });
     } catch (error) {
-      console.error('Error in getMyAppointments:', error);
       next(error);
     }
   }

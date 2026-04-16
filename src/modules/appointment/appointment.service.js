@@ -552,36 +552,49 @@ export class AppointmentService {
    * Get appointments for a user based on role
    */
   static async getAppointments(userId, role, filters) {
-    const { status, fromDate, toDate, type, page = 1, limit = 10 } = filters;
+    const { status, type, page = 1, limit = 10 } = filters;
     const skip = (page - 1) * limit;
+
+    console.log('=== DEBUG START ===');
+    console.log('userId:', userId.toString());
+    console.log('role:', role);
 
     let query = {};
 
-    console.log('=== getAppointments Debug ===');
-    console.log('userId:', userId);
-    console.log('role:', role);
-
     if (role === "patient") {
+      // প্রথমে patient খুঁজুন
       const patient = await Patient.findOne({ user: userId });
-      console.log('Found patient:', patient?._id);
-
+      console.log('Patient found:', patient ? patient._id : 'NOT FOUND');
+      
       if (!patient) {
-        console.log('Patient not found for user:', userId);
-        throw new ApiError(404, "Patient not found");
+        console.log('❌ Patient not found for user:', userId);
+        return {
+          appointments: [],
+          pagination: { page, limit, total: 0, pages: 0 }
+        };
       }
+      
       query.patient = patient._id;
-    } else if (role === "doctor") {
-      const doctor = await Doctor.findOne({ user: userId });
-      console.log('Found doctor:', doctor?._id);
+      console.log('Query patient ID:', query.patient);
+      
+      // সরাসরি DB থেকে কাউন্ট চেক করুন
+      const directCount = await Appointment.countDocuments({ patient: patient._id });
+      console.log('Direct count in DB:', directCount);
+    }
 
-      if (!doctor) {
-        throw new ApiError(404, "Doctor not found");
-      }
-      query.doctor = doctor._id;
+    // Add status filter if not 'all'
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+
+    // Add type filter if not 'all'
+    if (type && type !== 'all') {
+      query.type = type;
     }
 
     console.log('Final query:', JSON.stringify(query));
 
+    // Execute query
     const appointments = await Appointment.find(query)
       .populate({
         path: "patient",
@@ -600,19 +613,24 @@ export class AppointmentService {
       .populate("payment")
       .populate("prescription")
       .skip(skip)
-      .limit(limit)
+      .limit(parseInt(limit))
       .sort({ appointmentDate: -1, startTime: -1 });
 
-    console.log('Appointments found in DB:', appointments.length);
+    console.log('Appointments found:', appointments.length);
+    
+    if (appointments.length > 0) {
+      console.log('First appointment doctor:', appointments[0].doctor?.user?.fullName);
+    }
 
     const total = await Appointment.countDocuments(query);
-    console.log('Total appointments count:', total);
+    console.log('Total count:', total);
+    console.log('=== DEBUG END ===');
 
     return {
       appointments,
       pagination: {
-        page,
-        limit,
+        page: parseInt(page),
+        limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit),
       },
