@@ -129,9 +129,18 @@ export class AppointmentController {
    */
   static async getMyAppointments(req, res, next) {
     try {
-      console.log('User ID:', req.user._id);
-      console.log('User Role:', req.user.role);
+      console.log('=== Controller Debug ===');
+      console.log('User ID:', req.user?._id);
+      console.log('User Role:', req.user?.role);
       console.log('Query params:', req.query);
+
+      if (!req.user || !req.user._id) {
+        console.error('No user found in request');
+        return res.status(401).json({
+          success: false,
+          message: 'User not authenticated'
+        });
+      }
 
       const result = await AppointmentService.getAppointments(
         req.user._id,
@@ -139,8 +148,10 @@ export class AppointmentController {
         req.query
       );
 
-      console.log('Appointments found:', result.appointments.length);
-      console.log('First appointment:', result.appointments[0]);
+      console.log('Service result:', {
+        appointmentsCount: result.appointments.length,
+        pagination: result.pagination
+      });
 
       res.json({
         success: true,

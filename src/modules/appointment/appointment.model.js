@@ -2,16 +2,28 @@ import mongoose from "mongoose";
 
 const appointmentSchema = new mongoose.Schema(
   {
+    patientId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    doctorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    
     patient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Patient",
-      required: true,
     },
     doctor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Doctor",
-      required: true,
     },
+    
     appointmentDate: {
       type: Date,
       required: true,
@@ -42,6 +54,21 @@ const appointmentSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    
+    doctorInfo: {
+      name: String,
+      specialization: String,
+      profileImage: String,
+      consultationFee: Number,
+    },
+    
+    patientInfo: {
+      name: String,
+      email: String,
+      phone: String,
+      profileImage: String,
+    },
+    
     meetingLink: {
       type: String,
     },
@@ -68,9 +95,11 @@ const appointmentSchema = new mongoose.Schema(
   }
 );
 
-// Index for efficient querying
-appointmentSchema.index({ patient: 1, appointmentDate: -1 });
-appointmentSchema.index({ doctor: 1, appointmentDate: 1 });
+// Indexes for faster queries
+appointmentSchema.index({ patientId: 1, appointmentDate: -1 });
+appointmentSchema.index({ doctorId: 1, appointmentDate: 1 });
 appointmentSchema.index({ status: 1 });
+appointmentSchema.index({ patientId: 1, status: 1 });
+appointmentSchema.index({ doctorId: 1, status: 1 });
 
 export const Appointment = mongoose.model("Appointment", appointmentSchema);

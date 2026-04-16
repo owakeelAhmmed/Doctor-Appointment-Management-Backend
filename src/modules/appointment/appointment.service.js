@@ -19,32 +19,34 @@ export class AppointmentService {
   static async bookAppointment(userId, bookingData) {
     const { doctorId, appointmentDate, startTime, symptoms, type, paymentMethod } = bookingData;
 
-    // Get patient
-    const patient = await Patient.findOne({ user: userId });
-    if (!patient) {
-      throw new ApiError(404, "Patient profile not found");
+    // Get patient user info
+    const patientUser = await User.findById(userId).select("fullName email phone profileImage");
+    if (!patientUser) {
+      throw new ApiError(404, "User not found");
     }
 
-    // Check if doctor exists and is verified
-    const doctor = await Doctor.findOne({
-      _id: doctorId,
-      verificationStatus: "verified"
-    }).populate("user");
+    // Get doctor user info
+    const doctorUser = await User.findById(doctorId).select("fullName email phone profileImage");
+    if (!doctorUser) {
+      throw new ApiError(404, "Doctor not found");
+    }
 
-    if (!doctor) {
-      throw new ApiError(404, "Doctor not found or not verified");
+    // Get doctor profile for specialization and fee
+    const doctorProfile = await Doctor.findOne({ user: doctorId });
+    if (!doctorProfile) {
+      throw new ApiError(404, "Doctor profile not found");
     }
 
     // Validate slot availability
     await this.validateSlotAvailability(doctorId, appointmentDate, startTime);
 
-    // Calculate end time (default 30 minutes)
+    // Calculate end time
     const endTime = this.calculateEndTime(startTime);
 
     // Check for duplicate booking
     const existingAppointment = await Appointment.findOne({
-      doctor: doctorId,
-      patient: patient._id,
+      doctorId: doctorId,
+      patientId: userId,
       appointmentDate,
       startTime,
       status: { $in: ["pending", "confirmed"] },
@@ -54,39 +56,52 @@ export class AppointmentService {
       throw new ApiError(400, "You already have an appointment at this time");
     }
 
-    // Create appointment
     const appointment = await Appointment.create({
-      patient: patient._id,
-      doctor: doctorId,
+      // Direct user IDs
+      patientId: userId,
+      doctorId: doctorId,
+
+      // Denormalized doctor info
+      doctorInfo: {
+        name: doctorUser.fullName,
+        specialization: doctorProfile.specialization,
+        profileImage: doctorUser.profileImage?.url,
+        consultationFee: doctorProfile.consultationFee,
+      },
+
+      // Denormalized patient info
+      patientInfo: {
+        name: patientUser.fullName,
+        email: patientUser.email,
+        phone: patientUser.phone,
+        profileImage: patientUser.profileImage?.url,
+      },
+
       appointmentDate,
       startTime,
       endTime,
       symptoms,
       type,
-      fee: doctor.consultationFee,
+      fee: doctorProfile.consultationFee,
       status: "pending",
     });
 
-    // Create payment record
+    // Create payment record (optional, keep as is)
     const payment = await Payment.create({
       appointment: appointment._id,
-      patient: patient._id,
+      patient: userId,
       doctor: doctorId,
-      amount: doctor.consultationFee,
+      amount: doctorProfile.consultationFee,
       paymentMethod: paymentMethod || "bKash",
-      platformFee: Math.round(doctor.consultationFee * (doctor.commissionRate / 100)),
-      doctorAmount: doctor.consultationFee - Math.round(doctor.consultationFee * (doctor.commissionRate / 100)),
+      platformFee: Math.round(doctorProfile.consultationFee * (doctorProfile.commissionRate / 100)),
+      doctorAmount: doctorProfile.consultationFee - Math.round(doctorProfile.consultationFee * (doctorProfile.commissionRate / 100)),
       status: "pending",
     });
 
-    // Update appointment with payment reference
     appointment.payment = payment._id;
     await appointment.save();
 
-    // Send notifications
-    await this.sendBookingNotifications(appointment, doctor, patient);
-
-    // Generate video link if video consultation
+    // Generate video link if needed
     let meetingLink = null;
     if (type === "video") {
       meetingLink = await this.generateMeetingLink(appointment._id);
@@ -552,72 +567,78 @@ export class AppointmentService {
    * Get appointments for a user based on role
    */
   static async getAppointments(userId, role, filters) {
-    const { status, fromDate, toDate, type, page = 1, limit = 10 } = filters;
-    const skip = (page - 1) * limit;
+    try {
+      const { status, fromDate, toDate, type, page = 1, limit = 10 } = filters;
+      const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    let query = {};
+      console.log('========== DEBUG START ==========');
+      console.log('userId:', userId);
+      console.log('userId type:', typeof userId);
+      console.log('userId string:', userId.toString());
+      console.log('role:', role);
 
-    console.log('=== getAppointments Debug ===');
-    console.log('userId:', userId);
-    console.log('role:', role);
+      const allAppointments = await Appointment.find({}).limit(5).lean();
+      console.log('Total appointments in DB:', await Appointment.countDocuments({}));
+      console.log('Sample appointment:', allAppointments[0]);
 
-    if (role === "patient") {
-      const patient = await Patient.findOne({ user: userId });
-      console.log('Found patient:', patient?._id);
+      const testQuery = { patientId: userId };
+      console.log('Test query:', testQuery);
 
-      if (!patient) {
-        console.log('Patient not found for user:', userId);
-        throw new ApiError(404, "Patient not found");
+      const testResult = await Appointment.find(testQuery).lean();
+      console.log('Direct query result count:', testResult.length);
+
+      if (testResult.length > 0) {
+        console.log('First result:', {
+          id: testResult[0]._id,
+          patientId: testResult[0].patientId,
+          doctorName: testResult[0].doctorInfo?.name
+        });
       }
-      query.patient = patient._id;
-    } else if (role === "doctor") {
-      const doctor = await Doctor.findOne({ user: userId });
-      console.log('Found doctor:', doctor?._id);
 
-      if (!doctor) {
-        throw new ApiError(404, "Doctor not found");
+      let query = {};
+
+      if (role === "patient") {
+        query.patientId = userId;
+      } else if (role === "doctor") {
+        query.doctorId = userId;
       }
-      query.doctor = doctor._id;
+
+      // Apply filters
+      if (status && status !== 'all') {
+        query.status = status;
+      }
+      if (type && type !== 'all') {
+        query.type = type;
+      }
+
+      console.log('Final query:', JSON.stringify(query, null, 2));
+
+      const appointments = await Appointment.find(query)
+        .sort({ appointmentDate: -1, startTime: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean();
+
+      console.log('Appointments found:', appointments.length);
+      console.log('========== DEBUG END ==========');
+
+      const total = await Appointment.countDocuments(query);
+
+      return {
+        appointments,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / parseInt(limit)),
+        },
+      };
+    } catch (error) {
+      console.error('Error in getAppointments:', error);
+      throw error;
     }
-
-    console.log('Final query:', JSON.stringify(query));
-
-    const appointments = await Appointment.find(query)
-      .populate({
-        path: "patient",
-        populate: {
-          path: "user",
-          select: "fullName phone email profileImage",
-        },
-      })
-      .populate({
-        path: "doctor",
-        populate: {
-          path: "user",
-          select: "fullName specialization profileImage",
-        },
-      })
-      .populate("payment")
-      .populate("prescription")
-      .skip(skip)
-      .limit(limit)
-      .sort({ appointmentDate: -1, startTime: -1 });
-
-    console.log('Appointments found in DB:', appointments.length);
-
-    const total = await Appointment.countDocuments(query);
-    console.log('Total appointments count:', total);
-
-    return {
-      appointments,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
-    };
   }
+
 
   /**
    * Get single appointment details
