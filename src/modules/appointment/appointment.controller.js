@@ -148,14 +148,28 @@ export class AppointmentController {
         req.query
       );
 
+      // 🔥 FIX: Populate payment details for each appointment
+      const appointmentsWithPayment = await Promise.all(
+        result.appointments.map(async (appointment) => {
+          if (appointment.payment) {
+            const payment = await Payment.findById(appointment.payment);
+            return {
+              ...appointment,
+              payment: payment
+            };
+          }
+          return appointment;
+        })
+      );
+
       console.log('Service result:', {
-        appointmentsCount: result.appointments.length,
+        appointmentsCount: appointmentsWithPayment.length,
         pagination: result.pagination
       });
 
       res.json({
         success: true,
-        data: result.appointments,
+        data: appointmentsWithPayment,
         pagination: result.pagination,
       });
     } catch (error) {

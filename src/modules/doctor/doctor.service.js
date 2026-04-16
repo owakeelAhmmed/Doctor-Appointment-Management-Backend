@@ -394,8 +394,7 @@ export class DoctorService {
       })
       .sort({ startTime: 1 });
 
-    // Get day's schedule from doctor's availableDays
-    const dayName = today.toLocaleDateString("en-US", { weekday: "lowercase" });
+    const dayName = today.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
     const daySchedule = doctor.availableDays.find(d => d.day === dayName);
 
     return {
@@ -713,44 +712,104 @@ export class DoctorService {
 
     const { amount, paymentMethod } = withdrawalData;
 
+    // Validate amount
+    if (!amount || amount < 100) {
+      throw new ApiError(400, "Minimum withdrawal amount is 100 BDT");
+    }
+
     // Check if enough balance
     const availableBalance = doctor.totalEarnings - doctor.pendingWithdrawal;
     
     if (amount > availableBalance) {
-      throw new ApiError(400, "Insufficient balance");
+      throw new ApiError(400, `Insufficient balance. Available: ${availableBalance} BDT`);
     }
 
-    // Create withdrawal request (you might want to create a separate model for this)
+    // Generate transaction ID
+    const transactionId = `WD${Date.now()}${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
     const withdrawalRequest = {
-      doctor: doctor._id,
+      doctorId: doctor._id,
+      userId: userId,
       amount,
       paymentMethod,
       status: "pending",
+      transactionId,
       requestedAt: new Date(),
-      // Add payment details based on method
-      ...(paymentMethod === "bank" && { bankInfo: doctor.bankInfo }),
-      ...(paymentMethod === "bKash" && { bKashNumber: doctor.mobileBanking?.bKash }),
-      ...(paymentMethod === "nagad" && { nagadNumber: doctor.mobileBanking?.nagad }),
+      accountDetails: withdrawalData.accountDetails || null
     };
 
-    // Update pending withdrawal
-    doctor.pendingWithdrawal += amount;
-    await doctor.save();
+    const updatedDoctor = await Doctor.findOneAndUpdate(
+      { user: userId },
+      { 
+        $inc: { pendingWithdrawal: amount },
+        $set: { lastWithdrawalRequest: new Date() }
+      },
+      { 
+        new: true,
+        runValidators: false,  // Skip validation for this update
+        context: 'query'
+      }
+    );
 
-    // TODO: Save withdrawal request to database
-    // await Withdrawal.create(withdrawalRequest);
+    if (!updatedDoctor) {
+      throw new ApiError(500, "Failed to update withdrawal amount");
+    }
 
-    // Notify admin
-    // ...
+    this.sendWithdrawalRequestNotification(doctor, withdrawalRequest).catch(err => 
+      console.error("Failed to send withdrawal notification:", err)
+    );
 
     return {
+      success: true,
       message: "Withdrawal request submitted successfully",
-      amount,
-      paymentMethod,
-      status: "pending",
-      expectedSettlement: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 days
+      data: {
+        amount,
+        paymentMethod,
+        transactionId,
+        status: "pending",
+        requestedAt: new Date(),
+        expectedSettlement: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      }
     };
   }
+
+
+    /**
+   * Send withdrawal request notification to admin
+   */
+  static async sendWithdrawalRequestNotification(doctor, withdrawalRequest) {
+    try {
+      // Find all admins
+      const admins = await User.find({ 
+        role: { $in: ["admin", "superadmin"] } 
+      }).select("email fullName");
+      
+      if (admins.length === 0) return;
+      
+      // Send email to each admin
+      for (const admin of admins) {
+        await sendEmail({
+          to: admin.email,
+          subject: "New Withdrawal Request",
+          template: "withdrawal-request",
+          data: {
+            adminName: admin.fullName,
+            doctorName: doctor.user?.fullName || "Doctor",
+            amount: withdrawalRequest.amount,
+            paymentMethod: withdrawalRequest.paymentMethod,
+            requestedAt: new Date().toLocaleString(),
+            doctorId: doctor._id,
+          },
+        });
+      }
+      
+      console.log(`✅ Withdrawal request notification sent to ${admins.length} admins`);
+    } catch (error) {
+      console.error("Failed to send withdrawal notification:", error);
+      // Don't throw error - notification failure shouldn't break the withdrawal request
+    }
+  }
+
 
   /**
    * Get withdrawal history

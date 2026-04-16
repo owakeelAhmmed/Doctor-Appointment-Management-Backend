@@ -107,20 +107,26 @@ export const cancelAppointmentValidation = [
 ];
 
 export const getAppointmentsValidation = [
-  query("status")
+ query("status")
     .optional()
     .isIn(["pending", "confirmed", "completed", "cancelled", "all"])
     .withMessage("Invalid status"),
 
   query("fromDate")
-    .optional()
-    .isDate()
-    .withMessage("Valid from date required"),
+      .optional()
+      .custom(value => {
+        if (!value || value === '') return true
+        return !isNaN(Date.parse(value))
+      })
+      .withMessage("Valid from date required"),
 
   query("toDate")
-    .optional()
-    .isDate()
-    .withMessage("Valid to date required"),
+      .optional()
+      .custom(value => {
+        if (!value || value === '') return true
+        return !isNaN(Date.parse(value))
+      })
+      .withMessage("Valid to date required"),
 
   query("type")
     .optional()

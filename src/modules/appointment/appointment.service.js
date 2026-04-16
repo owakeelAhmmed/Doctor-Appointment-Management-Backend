@@ -17,143 +17,158 @@ export class AppointmentService {
    * Book new appointment
    */
   static async bookAppointment(userId, bookingData) {
-    const { doctorId, appointmentDate, startTime, symptoms, type, paymentMethod } = bookingData;
+      const { doctorId, appointmentDate, startTime, symptoms, type, paymentMethod } = bookingData;
 
-    // Get patient user info
-    const patientUser = await User.findById(userId).select("fullName email phone profileImage");
-    if (!patientUser) {
-      throw new ApiError(404, "User not found");
+      console.log('=== BOOKING DEBUG ===');
+      console.log('Received doctorId:', doctorId);
+      console.log('Received doctorId type:', typeof doctorId);
+
+      // Get patient user info
+      const patientUser = await User.findById(userId).select("fullName email phone profileImage");
+      if (!patientUser) {
+        throw new ApiError(404, "Patient user not found");
+      }
+      console.log('Patient found:', patientUser.fullName);
+
+      // 🔥 FIX 1: First find doctor user by ID
+      const doctorUser = await User.findById(doctorId).select("fullName email phone profileImage");
+      if (!doctorUser) {
+        throw new ApiError(404, `Doctor user not found with ID: ${doctorId}`);
+      }
+      console.log('Doctor user found:', doctorUser.fullName);
+
+      // 🔥 FIX 2: Find doctor profile using user ID
+      const doctorProfile = await Doctor.findOne({ user: doctorId });
+      if (!doctorProfile) {
+        throw new ApiError(404, `Doctor profile not found for user: ${doctorId}`);
+      }
+      console.log('Doctor profile found:', doctorProfile._id);
+      console.log('Doctor specialization:', doctorProfile.specialization);
+
+      // 🔥 FIX 3: Check if doctor is verified
+      if (doctorProfile.verificationStatus !== 'verified') {
+        throw new ApiError(403, "Doctor is not verified yet. Cannot book appointment.");
+      }
+
+      // 🔥 FIX 4: Validate slot availability - PASS doctorProfile._id (Doctor document ID)
+      await this.validateSlotAvailability(doctorProfile._id, appointmentDate, startTime);
+
+      // Calculate end time
+      const endTime = this.calculateEndTime(startTime);
+
+      // Check for duplicate booking
+      const existingAppointment = await Appointment.findOne({
+        doctorId: doctorId,
+        patientId: userId,
+        appointmentDate,
+        startTime,
+        status: { $in: ["pending", "confirmed"] },
+      });
+
+      if (existingAppointment) {
+        throw new ApiError(400, "You already have an appointment at this time");
+      }
+
+      // Create appointment
+      const appointment = await Appointment.create({
+        patientId: userId,
+        doctorId: doctorId,
+        doctorInfo: {
+          name: doctorUser.fullName,
+          specialization: doctorProfile.specialization,
+          profileImage: doctorUser.profileImage?.url,
+          consultationFee: doctorProfile.consultationFee,
+        },
+        patientInfo: {
+          name: patientUser.fullName,
+          email: patientUser.email,
+          phone: patientUser.phone,
+          profileImage: patientUser.profileImage?.url,
+        },
+        appointmentDate,
+        startTime,
+        endTime,
+        symptoms,
+        type,
+        fee: doctorProfile.consultationFee,
+        status: "pending",
+      });
+
+      console.log('Appointment created:', appointment._id);
+
+      // Create payment record
+      const payment = await Payment.create({
+        appointment: appointment._id,
+        patient: userId,
+        doctor: doctorId,
+        amount: doctorProfile.consultationFee,
+        paymentMethod: paymentMethod || "bKash",
+        platformFee: Math.round(doctorProfile.consultationFee * (doctorProfile.commissionRate / 100)),
+        doctorAmount: doctorProfile.consultationFee - Math.round(doctorProfile.consultationFee * (doctorProfile.commissionRate / 100)),
+        status: "pending",
+      });
+
+      appointment.payment = payment._id;
+      await appointment.save();
+
+      // Generate video link if needed
+      let meetingLink = null;
+      if (type === "video") {
+        meetingLink = await this.generateMeetingLink(appointment._id);
+      }
+
+      return {
+        appointment,
+        payment,
+        meetingLink,
+        message: "Appointment booked successfully. Please complete payment to confirm.",
+      };
     }
-
-    // Get doctor user info
-    const doctorUser = await User.findById(doctorId).select("fullName email phone profileImage");
-    if (!doctorUser) {
-      throw new ApiError(404, "Doctor not found");
-    }
-
-    // Get doctor profile for specialization and fee
-    const doctorProfile = await Doctor.findOne({ user: doctorId });
-    if (!doctorProfile) {
-      throw new ApiError(404, "Doctor profile not found");
-    }
-
-    // Validate slot availability
-    await this.validateSlotAvailability(doctorId, appointmentDate, startTime);
-
-    // Calculate end time
-    const endTime = this.calculateEndTime(startTime);
-
-    // Check for duplicate booking
-    const existingAppointment = await Appointment.findOne({
-      doctorId: doctorId,
-      patientId: userId,
-      appointmentDate,
-      startTime,
-      status: { $in: ["pending", "confirmed"] },
-    });
-
-    if (existingAppointment) {
-      throw new ApiError(400, "You already have an appointment at this time");
-    }
-
-    const appointment = await Appointment.create({
-      // Direct user IDs
-      patientId: userId,
-      doctorId: doctorId,
-
-      // Denormalized doctor info
-      doctorInfo: {
-        name: doctorUser.fullName,
-        specialization: doctorProfile.specialization,
-        profileImage: doctorUser.profileImage?.url,
-        consultationFee: doctorProfile.consultationFee,
-      },
-
-      // Denormalized patient info
-      patientInfo: {
-        name: patientUser.fullName,
-        email: patientUser.email,
-        phone: patientUser.phone,
-        profileImage: patientUser.profileImage?.url,
-      },
-
-      appointmentDate,
-      startTime,
-      endTime,
-      symptoms,
-      type,
-      fee: doctorProfile.consultationFee,
-      status: "pending",
-    });
-
-    // Create payment record (optional, keep as is)
-    const payment = await Payment.create({
-      appointment: appointment._id,
-      patient: userId,
-      doctor: doctorId,
-      amount: doctorProfile.consultationFee,
-      paymentMethod: paymentMethod || "bKash",
-      platformFee: Math.round(doctorProfile.consultationFee * (doctorProfile.commissionRate / 100)),
-      doctorAmount: doctorProfile.consultationFee - Math.round(doctorProfile.consultationFee * (doctorProfile.commissionRate / 100)),
-      status: "pending",
-    });
-
-    appointment.payment = payment._id;
-    await appointment.save();
-
-    // Generate video link if needed
-    let meetingLink = null;
-    if (type === "video") {
-      meetingLink = await this.generateMeetingLink(appointment._id);
-    }
-
-    return {
-      appointment,
-      payment,
-      meetingLink,
-      message: "Appointment booked successfully. Please complete payment to confirm.",
-    };
-  }
 
   /**
    * Validate slot availability
    */
-  static async validateSlotAvailability(doctorId, date, time) {
-    const doctor = await Doctor.findById(doctorId);
+  static async validateSlotAvailability(doctorDocId, date, time) {
+      console.log('Validating slot for doctor document ID:', doctorDocId);
+      
+      const doctor = await Doctor.findById(doctorDocId);
 
-    if (!doctor) {
-      throw new ApiError(404, "Doctor not found");
+      if (!doctor) {
+        throw new ApiError(404, `Doctor not found with ID: ${doctorDocId}`);
+      }
+
+      console.log('Doctor found for validation:', doctor._id);
+      console.log('Doctor available days:', doctor.availableDays?.length);
+
+      const dayName = new Date(date).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+
+      // Check doctor's available days
+      const daySchedule = doctor.availableDays?.find(d => d.day === dayName);
+
+      if (!daySchedule || !daySchedule.isAvailable) {
+        throw new ApiError(400, "Doctor not available on this day");
+      }
+
+      // Check if time slot exists in schedule
+      const slot = daySchedule.slots?.find(s => s.startTime === time);
+      if (!slot) {
+        throw new ApiError(400, "Selected time slot not available");
+      }
+
+      // Check if slot is already booked - use doctor document ID
+      const bookedCount = await Appointment.countDocuments({
+        doctor: doctorDocId,
+        appointmentDate: date,
+        startTime: time,
+        status: { $in: ["confirmed", "pending"] },
+      });
+
+      if (bookedCount >= (slot.maxPatients || 1)) {
+        throw new ApiError(400, "This time slot is fully booked");
+      }
+
+      return true;
     }
-
-    const dayName = new Date(date).toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-
-    // Check doctor's available days
-    const daySchedule = doctor.availableDays.find(d => d.day === dayName);
-
-    if (!daySchedule || !daySchedule.isAvailable) {
-      throw new ApiError(400, "Doctor not available on this day");
-    }
-
-    // Check if time slot exists in schedule
-    const slot = daySchedule.slots.find(s => s.startTime === time);
-    if (!slot) {
-      throw new ApiError(400, "Selected time slot not available");
-    }
-
-    // Check if slot is already booked
-    const bookedCount = await Appointment.countDocuments({
-      doctor: doctorId,
-      appointmentDate: date,
-      startTime: time,
-      status: { $in: ["confirmed", "pending"] },
-    });
-
-    if (bookedCount >= (slot.maxPatients || 1)) {
-      throw new ApiError(400, "This time slot is fully booked");
-    }
-
-    return true;
-  }
 
   /**
    * Calculate end time (30 minutes after start)
@@ -171,13 +186,11 @@ export class AppointmentService {
    * Generate meeting link for video consultation
    */
   static async generateMeetingLink(appointmentId) {
-    // You can integrate with Zoom/Google Meet/Jitsi here
-    // For now, generate a simple unique link
     const uniqueId = crypto.randomBytes(16).toString("hex");
-    const meetingLink = `https://meet.doctorsystem.com/${appointmentId}-${uniqueId}`;
-
+    const meetingLink = `https://meet.jit.si/doccure-${appointmentId}-${uniqueId}`;
+    
     await Appointment.findByIdAndUpdate(appointmentId, { meetingLink });
-
+    
     return meetingLink;
   }
 
@@ -571,39 +584,44 @@ export class AppointmentService {
       const { status, fromDate, toDate, type, page = 1, limit = 10 } = filters;
       const skip = (parseInt(page) - 1) * parseInt(limit);
 
-      console.log('========== DEBUG START ==========');
+      console.log('=== 🚀 SERVICE DEBUG ===');
       console.log('userId:', userId);
-      console.log('userId type:', typeof userId);
-      console.log('userId string:', userId.toString());
+      console.log('userId toString():', userId.toString());
       console.log('role:', role);
-
-      const allAppointments = await Appointment.find({}).limit(5).lean();
-      console.log('Total appointments in DB:', await Appointment.countDocuments({}));
-      console.log('Sample appointment:', allAppointments[0]);
-
-      const testQuery = { patientId: userId };
-      console.log('Test query:', testQuery);
-
-      const testResult = await Appointment.find(testQuery).lean();
-      console.log('Direct query result count:', testResult.length);
-
-      if (testResult.length > 0) {
-        console.log('First result:', {
-          id: testResult[0]._id,
-          patientId: testResult[0].patientId,
-          doctorName: testResult[0].doctorInfo?.name
-        });
-      }
 
       let query = {};
 
       if (role === "patient") {
-        query.patientId = userId;
+        const mongoose = require('mongoose');
+        const patientObjectId = typeof userId === 'string' 
+          ? new mongoose.Types.ObjectId(userId) 
+          : userId;
+        
+        query.patientId = patientObjectId;
+        console.log('Query patientId:', query.patientId);
       } else if (role === "doctor") {
         query.doctorId = userId;
       }
 
-      // Apply filters
+      const totalInDB = await Appointment.countDocuments({});
+      console.log('Total appointments in DB:', totalInDB);
+      
+      const matchingCount = await Appointment.countDocuments(query);
+      console.log('Matching appointments count:', matchingCount);
+      
+      if (matchingCount === 0) {
+        console.log('⚠️ No matching appointments found for query:', query);
+        return {
+          appointments: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            pages: 0,
+          },
+        };
+      }
+
       if (status && status !== 'all') {
         query.status = status;
       }
@@ -614,13 +632,21 @@ export class AppointmentService {
       console.log('Final query:', JSON.stringify(query, null, 2));
 
       const appointments = await Appointment.find(query)
+        .populate('payment')
         .sort({ appointmentDate: -1, startTime: -1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean();
 
       console.log('Appointments found:', appointments.length);
-      console.log('========== DEBUG END ==========');
+      
+      if (appointments.length > 0) {
+        console.log('First appointment:', {
+          id: appointments[0]._id,
+          status: appointments[0].status,
+          paymentId: appointments[0].payment
+        });
+      }
 
       const total = await Appointment.countDocuments(query);
 
@@ -634,7 +660,7 @@ export class AppointmentService {
         },
       };
     } catch (error) {
-      console.error('Error in getAppointments:', error);
+      console.error('❌ Error in getAppointments:', error);
       throw error;
     }
   }

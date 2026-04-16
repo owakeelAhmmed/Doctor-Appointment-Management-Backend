@@ -324,24 +324,146 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Confirm appointment after successful payment
-   */
+/**
+ * Confirm appointment after successful payment
+ */
   static async confirmAppointmentAfterPayment(appointmentId, paymentId, session) {
-    const appointment = await Appointment.findById(appointmentId).session(session);
-
-    appointment.status = "confirmed";
-    appointment.payment = paymentId;
-    await appointment.save({ session });
-
-    // Update doctor's total earnings
-    const payment = await Payment.findById(paymentId).session(session);
-    await Doctor.findByIdAndUpdate(
-      payment.doctor,
-      { $inc: { totalEarnings: payment.doctorAmount } },
-      { session }
-    );
+    try {
+      console.log('Confirming appointment:', appointmentId);
+      console.log('With payment:', paymentId);
+      
+      // 🔥 FIX: Find appointment by ID
+      const appointment = await Appointment.findById(appointmentId).session(session);
+      
+      if (!appointment) {
+        console.error('Appointment not found:', appointmentId);
+        throw new ApiError(404, `Appointment not found with ID: ${appointmentId}`);
+      }
+      
+      console.log('Appointment found, current status:', appointment.status);
+      
+      appointment.status = "confirmed";
+      appointment.payment = paymentId;
+      await appointment.save({ session });
+      console.log('Appointment status updated to confirmed');
+      
+      // Update doctor's total earnings
+      const payment = await Payment.findById(paymentId).session(session);
+      if (payment && payment.doctor) {
+        await Doctor.findByIdAndUpdate(
+          payment.doctor,
+          { $inc: { totalEarnings: payment.doctorAmount } },
+          { session }
+        );
+        console.log('Doctor earnings updated');
+      }
+      
+      return appointment;
+    } catch (error) {
+      console.error('Error in confirmAppointmentAfterPayment:', error);
+      throw error;
+    }
   }
+
+    /**
+     * Handle SSLCommerz success callback - ONLY ONE VERSION
+     */
+    static async handleSSLCommerzSuccess(transactionId, amount, bankTransactionId) {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        console.log("=== Looking for payment ===");
+        console.log("Received transactionId:", transactionId);
+
+        let payment = null;
+
+        // 1. Try exact match by transactionId
+        payment = await Payment.findOne({ transactionId }).session(session);
+        console.log('Search by transactionId:', payment ? 'Found' : 'Not found');
+
+        // 2. Try by appointment (find recent pending payment)
+        if (!payment) {
+          const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+          const recentPayments = await Payment.find({
+            status: "pending",
+            createdAt: { $gte: fiveMinutesAgo }
+          }).session(session);
+
+          console.log("Recent pending payments found:", recentPayments.length);
+
+          if (recentPayments.length === 1) {
+            payment = recentPayments[0];
+            console.log("Using single recent payment:", payment._id);
+          } else if (recentPayments.length > 1) {
+            payment = recentPayments.find(p => Math.abs(p.amount - parseFloat(amount)) < 1);
+            console.log("Found by amount match:", payment?._id);
+          }
+        }
+
+        if (!payment) {
+          const allPending = await Payment.find({ status: "pending" }).session(session);
+          console.log("All pending payments:", allPending.map(p => ({
+            id: p._id,
+            transactionId: p.transactionId,
+            amount: p.amount,
+            appointment: p.appointment
+          })));
+
+          throw new ApiError(404, `Payment not found for transactionId: ${transactionId}`);
+        }
+
+        console.log("Found payment:", {
+          id: payment._id,
+          transactionId: payment.transactionId,
+          amount: payment.amount,
+          status: payment.status,
+          appointment: payment.appointment
+        });
+
+        if (payment.status === "completed") {
+          await session.commitTransaction();
+          return payment;
+        }
+
+        // Update payment
+        payment.status = "completed";
+        payment.paymentDate = new Date();
+        payment.paymentDetails = {
+          ...payment.paymentDetails,
+          bankTransactionId: bankTransactionId,
+          sslTransactionId: transactionId,
+          validatedAt: new Date(),
+        };
+        await payment.save({ session });
+        console.log('Payment updated to completed');
+
+        // Confirm appointment
+        await this.confirmAppointmentAfterPayment(payment.appointment, payment._id, session);
+        console.log('Appointment confirmed');
+
+        await session.commitTransaction();
+        console.log('Transaction committed successfully');
+
+        // Send notifications (don't await)
+        this.sendPaymentConfirmation(payment).catch(err => 
+          console.error('Failed to send payment confirmation:', err)
+        );
+
+        return payment;
+        
+      } catch (error) {
+        // Only abort if transaction is still active
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+          console.error('Transaction aborted due to error');
+        }
+        console.error('SSLCommerz success error:', error);
+        throw error;
+      } finally {
+        await session.endSession();
+      }
+    }
 
   /**
    * Mark payment as failed
@@ -1077,14 +1199,63 @@ export class PaymentService {
   static async initiateSSLCommerzPayment(patientId, paymentData) {
     const { appointmentId, paymentMethod = "card" } = paymentData;
 
-    // Get appointment and validate
-    const appointment = await Appointment.findOne({
-      _id: appointmentId,
-      patient: patientId,
-    }).populate("doctor");
+    console.log('=== SSLCommerz Initiate Debug ===');
+    console.log('patientId (Patient document ID):', patientId);
+    console.log('appointmentId:', appointmentId);
 
+    // 🔥 FIX: Find appointment by _id
+    const appointment = await Appointment.findById(appointmentId);
+
+    console.log('Appointment found:', appointment ? 'Yes' : 'No');
+    
     if (!appointment) {
-      throw new ApiError(404, "Appointment not found");
+      throw new ApiError(404, `Appointment not found with ID: ${appointmentId}`);
+    }
+
+    console.log('Appointment patientId:', appointment.patientId);
+    console.log('Appointment doctorId:', appointment.doctorId);
+
+    let userFromPatient = null;
+    let isAuthorized = false;
+    
+    // Method 1: Check if patientId matches appointment.patientId directly
+    if (appointment.patientId && appointment.patientId.toString() === patientId) {
+      isAuthorized = true;
+      console.log('Authorized by direct patientId match');
+    }
+    
+    // Method 2: Find patient document and get user ID
+    if (!isAuthorized) {
+      const patientDoc = await Patient.findById(patientId);
+      console.log('Patient document found:', patientDoc ? 'Yes' : 'No');
+      
+      if (patientDoc && patientDoc.user) {
+        userFromPatient = patientDoc.user.toString();
+        console.log('User ID from patient document:', userFromPatient);
+        console.log('Appointment patientId:', appointment.patientId?.toString());
+        
+        if (userFromPatient === appointment.patientId?.toString()) {
+          isAuthorized = true;
+          console.log('Authorized by patient document user ID match');
+        }
+      }
+    }
+    
+    // Method 3: Try to find patient by user ID
+    if (!isAuthorized) {
+      const patientByUser = await Patient.findOne({ user: appointment.patientId });
+      console.log('Patient by user ID found:', patientByUser ? 'Yes' : 'No');
+      
+      if (patientByUser && patientByUser._id.toString() === patientId) {
+        isAuthorized = true;
+        console.log('Authorized by patient user ID lookup');
+      }
+    }
+
+    console.log('Is authorized:', isAuthorized);
+
+    if (!isAuthorized) {
+      throw new ApiError(403, "You are not authorized to pay for this appointment");
     }
 
     // Check if appointment is already paid
@@ -1097,13 +1268,17 @@ export class PaymentService {
       throw new ApiError(400, "Payment already completed for this appointment");
     }
 
+    // Get doctor profile for commission rate
+    const doctorProfile = await Doctor.findOne({ user: appointment.doctorId });
+    
     // Calculate fees
-    const platformFee = Math.round(appointment.fee * (appointment.doctor.commissionRate / 100));
+    const commissionRate = doctorProfile?.commissionRate || 20;
+    const platformFee = Math.round(appointment.fee * (commissionRate / 100));
     const doctorAmount = appointment.fee - platformFee;
     const transactionId = this.generateTransactionId();
 
-    // Get patient user info
-    const patient = await Patient.findById(patientId).populate("user");
+    // Get patient user info for email/SMS
+    const patientDoc = await Patient.findById(patientId).populate("user");
 
     // Create or update payment record
     let payment = await Payment.findOne({ appointment: appointmentId });
@@ -1119,7 +1294,7 @@ export class PaymentService {
       payment = await Payment.create({
         appointment: appointmentId,
         patient: patientId,
-        doctor: appointment.doctor._id,
+        doctor: appointment.doctorId,
         amount: appointment.fee,
         platformFee,
         doctorAmount,
@@ -1129,23 +1304,29 @@ export class PaymentService {
       });
     }
 
+    await payment.save();
+
+    console.log('Payment record created/updated:', payment._id);
+
     // Create SSLCommerz payment session
     const { createSSLCommerzPayment } = await import("./payment.utils.js");
 
     const sslResult = await createSSLCommerzPayment({
       amount: appointment.fee,
       transactionId,
-      customerName: patient.user.fullName,
-      customerEmail: patient.user.email,
-      customerPhone: patient.user.phone,
-      customerAddress: patient.user.address?.street || "Dhaka",
-      productName: `Appointment with Dr. ${appointment.doctor.user?.fullName || 'Doctor'}`,
+      customerName: patientDoc?.user?.fullName || "Patient",
+      customerEmail: patientDoc?.user?.email || "patient@example.com",
+      customerPhone: patientDoc?.user?.phone || "01700000000",
+      customerAddress: patientDoc?.user?.address?.street || "Dhaka",
+      productName: `Appointment with Dr. ${appointment.doctorInfo?.name || 'Doctor'}`,
     });
+
+    console.log('SSLCommerz result:', sslResult);
 
     if (!sslResult.success) {
       payment.status = "failed";
       await payment.save();
-      throw new ApiError(400, sslResult.message);
+      throw new ApiError(400, sslResult.message || "Payment initiation failed");
     }
 
     // Store session key in payment details
@@ -1160,105 +1341,6 @@ export class PaymentService {
       payment,
       redirectURL: sslResult.redirectURL,
     };
-  }
-
-  /**
-   * Handle SSLCommerz success callback
-   */
-  static async handleSSLCommerzSuccess(transactionId, amount, bankTransactionId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      console.log("=== Looking for payment ===");
-      console.log("Received transactionId:", transactionId);
-
-      // ✅ Try multiple ways to find payment
-      let payment = null;
-
-      // 1. Try exact match
-      payment = await Payment.findOne({ transactionId }).session(session);
-
-      // 2. If not found, try by appointment (find recent pending payment)
-      if (!payment) {
-        // Get recent pending payments (last 5 minutes)
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-        const recentPayments = await Payment.find({
-          status: "pending",
-          createdAt: { $gte: fiveMinutesAgo }
-        }).session(session);
-
-        console.log("Recent pending payments found:", recentPayments.length);
-
-        if (recentPayments.length === 1) {
-          payment = recentPayments[0];
-          console.log("Using single recent payment:", payment._id);
-        } else if (recentPayments.length > 1) {
-          // Try to match by amount
-          payment = recentPayments.find(p => Math.abs(p.amount - parseFloat(amount)) < 1);
-          console.log("Found by amount match:", payment?._id);
-        }
-      }
-
-      // 3. If still not found, try by transactionId partial match
-      if (!payment && transactionId) {
-        const partialId = transactionId.slice(-15);
-        payment = await Payment.findOne({
-          transactionId: { $regex: partialId, $options: 'i' }
-        }).session(session);
-        console.log("Found by partial match:", payment?._id);
-      }
-
-      if (!payment) {
-        // Log all pending payments for debugging
-        const allPending = await Payment.find({ status: "pending" }).session(session);
-        console.log("All pending payments:", allPending.map(p => ({
-          id: p._id,
-          transactionId: p.transactionId,
-          amount: p.amount,
-          appointment: p.appointment
-        })));
-
-        throw new ApiError(404, `Payment not found for transactionId: ${transactionId}`);
-      }
-
-      console.log("Found payment:", {
-        id: payment._id,
-        transactionId: payment.transactionId,
-        amount: payment.amount,
-        status: payment.status
-      });
-
-      if (payment.status === "completed") {
-        return payment;
-      }
-
-      // Update payment
-      payment.status = "completed";
-      payment.paymentDate = new Date();
-      payment.paymentDetails = {
-        ...payment.paymentDetails,
-        bankTransactionId: bankTransactionId,
-        sslTransactionId: transactionId,
-        validatedAt: new Date(),
-      };
-      await payment.save({ session });
-
-      // Confirm appointment
-      await this.confirmAppointmentAfterPayment(payment.appointment, payment._id, session);
-
-      await session.commitTransaction();
-
-      // Send notifications
-      await this.sendPaymentConfirmation(payment);
-
-      return payment;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
-    }
   }
 
   /**
